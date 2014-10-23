@@ -1,0 +1,119 @@
+#!/bin/sh
+IDEV="br-lan"
+ODEV1="eth0"
+ODEV2="wlan0-16"
+if [ "repeater" == `uci get network.wan.proto` ]; then
+ODEV=$ODEV2
+else
+ODEV=$ODEV1
+fi
+
+#jiasu_ip="192.168.1.123"
+jiasu_ip=$1
+
+. /lib/functions.sh
+
+load_modules(){
+		insmod imq numdevs=2 
+		insmod cls_fw 
+		insmod sch_hfsc 
+		insmod sch_sfq 
+		insmod sch_red 
+		insmod sch_htb 
+		insmod sch_prio 
+		insmod ipt_multiport 
+		insmod ipt_CONNMARK
+		insmod ipt_length 
+		insmod ipt_IMQ 
+		insmod ipt_hashlimit
+		insmod cls_u32
+		insmod xt_connlimit
+		insmod xt_connbytes
+}
+
+lan_net(){
+lan_ipaddr=$(uci get network.lan.ipaddr)
+lan_netmask=$(uci get network.lan.netmask)
+ calc=$(ipcalc.sh $lan_ipaddr $lan_netmask)
+prefix=${calc##*=}
+lan_network=${calc##*NETWORK=}
+lan_network=$(echo $lan_network | sed 's/.PRE.*//')
+NET="$lan_network/$prefix"
+UIP=$(uci get network.lan.ipaddr|awk -F "." '{print $1"."$2"."$3 }')
+}
+
+qos_start(){
+tc qdisc del dev $ODEV1 root 2>/dev/null
+tc qdisc del dev $ODEV2 root 2>/dev/null
+tc qdisc del dev $IDEV root 2>/dev/null
+tc qdisc add dev $ODEV root handle 10: htb default 256
+tc qdisc add dev $IDEV root handle 10: htb default 256
+}
+
+qos_stop(){
+tc qdisc del dev $ODEV1 root 2>/dev/null
+tc qdisc del dev $ODEV2 root 2>/dev/null
+tc qdisc del dev $IDEV root 2>/dev/null
+}
+
+#µ•IPº”ÀŸ
+qos_ip_jiasu()
+{
+i=$(echo $jiasu_ip |cut  -d "." -f4)
+echo "$UIP.$i start jiasu"
+tc class add dev $ODEV parent 10: classid 10:2256 htb rate 10kbps ceil 10kbps prio 2
+tc qdisc add dev $ODEV parent 10:2256 handle 100256: pfifo
+tc filter add dev $ODEV parent 10: protocol ip prio 1 u32 match ip src $UIP.$i flowid 10:
+#tc filter add dev $ODEV parent 10: protocol ip prio 1 u32 match ip dst $UIP.$i flowid 10:
+tc filter add dev $ODEV parent 10: protocol ip prio 2 u32 match ip src $NET flowid 10:2256
+#tc filter add dev $ODEV parent 10: protocol ip prio 2 u32 match ip dst $NET flowid 10:2256
+
+tc class add dev $IDEV parent 10: classid 10:2256 htb rate 10kbps ceil 10kbps prio 2
+tc qdisc add dev $IDEV parent 10:2256 handle 100256: pfifo
+#tc filter add dev $IDEV parent 10: protocol ip prio 1 u32 match ip src $UIP.$i flowid 10:
+tc filter add dev $IDEV parent 10: protocol ip prio 1 u32 match ip dst $UIP.$i flowid 10:
+#tc filter add dev $IDEV parent 10: protocol ip prio 2 u32 match ip src $NET flowid 10:2256
+tc filter add dev $IDEV parent 10: protocol ip prio 2 u32 match ip dst $NET flowid 10:2256
+
+#sleep 10m
+
+#qos_stop
+
+#echo "$UIP.$i end jiasu"
+}
+
+checkip()
+{
+        ckStep1=`echo $1 | awk -F"." '{print NF}'`
+        if [ $ckStep1 -eq 4 ] || [ $ckStep1 -eq 6 ]
+        then
+                ckStep2=`echo $1 | awk -F"." '{if ($1!=0 && $NF!=0) split ($0,IPNUM,".")} END \
+        { for (k in IPNUM) if (IPNUM[k]==0) print IPNUM[k]; else if (IPNUM[k]!=0 && IPNUM[k]!~/[a-z|A-Z]/ && length(IPNUM[k])<=3 &&
+IPNUM[k]<255 && IPNUM[k]!~/^0/) print IPNUM[k]}'| wc -l`
+                if [ $ckStep2 -eq $ckStep1 ]
+                then
+                        echo 0
+                else
+                        echo 1
+                fi
+        else
+                echo 1
+        fi
+}
+
+lan_net
+qos_stop >/dev/null 2>&1
+if [ ! $jiasu_ip ];then
+		echo "need param ip, exit"
+		exit 1
+fi
+if [ `checkip $jiasu_ip` -eq 1 ]; then
+		echo "param ip illegal, exit"
+		exit 2
+fi
+load_modules
+qos_start
+echo "qos_jiasu $jiasu_ip"
+qos_ip_jiasu
+
+

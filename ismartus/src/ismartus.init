@@ -1,0 +1,13 @@
+#!/bin/sh /etc/rc.common
+# (C) 2008 openwrt.org
+
+START=99
+STOP=99
+
+start() {
+        [ -x /usr/bin/ismartus ] && ismartus -d
+}
+
+stop() {
+        killall ismartus
+}

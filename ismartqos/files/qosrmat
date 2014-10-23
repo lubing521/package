@@ -1,0 +1,17 @@
+#!/bin/sh
+
+delqos()
+{
+	#echo $1
+	if [ -n "$1" ] && [ -n "`at -c $1 | grep "qos"`" ]
+	then
+		at -r $1
+	fi
+}
+
+echo "`at -l | awk '{print $1}'`" | while read line
+do
+    delqos $line
+    #echo "#########"
+done
+

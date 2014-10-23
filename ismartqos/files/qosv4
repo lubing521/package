@@ -1,0 +1,177 @@
+#!/bin/sh
+IDEV="br-lan"
+ODEV1="eth0"
+ODEV2="wlan0-16"
+if [ "repeater" == `uci get network.wan.proto` ]; then
+ODEV=$ODEV2
+else
+ODEV=$ODEV1
+fi
+. /lib/functions.sh
+
+load_modules(){
+#		insmod imq numdevs=2 
+		insmod cls_fw 
+		insmod sch_hfsc 
+		insmod sch_sfq 
+		insmod sch_red 
+		insmod sch_htb 
+		insmod sch_prio 
+		insmod ipt_multiport 
+		insmod ipt_CONNMARK
+		insmod ipt_length 
+		insmod ipt_IMQ 
+		insmod ipt_hashlimit
+		insmod cls_u32
+		insmod xt_connlimit
+#		insmod xt_connbytes
+}
+
+
+lan_net(){
+lan_ipaddr=$(uci get network.lan.ipaddr)
+lan_netmask=$(uci get network.lan.netmask)
+ calc=$(ipcalc.sh $lan_ipaddr $lan_netmask)
+prefix=${calc##*=}
+lan_network=${calc##*NETWORK=}
+lan_network=$(echo $lan_network | sed 's/.PRE.*//')
+NET="$lan_network/$prefix"
+UIP=$(uci get network.lan.ipaddr|awk -F "." '{print $1"."$2"."$3 }')
+}
+
+qos_config_get(){
+ config_get enable $1 enable
+ config_get UP $1 UP
+ config_get DOWN $1 DOWN
+ config_get UPLOADR2 $1 UPLOADR2
+ config_get UPLOADC2 $1 UPLOADC2
+ config_get DOWNLOADR2 $1 DOWNLOADR2
+ config_get DOWNLOADC2 $1 DOWNLOADC2
+ config_get UPLOADR $1 UPLOADR
+ config_get DOWNLOADR $1 DOWNLOADR 
+ config_get qos_scheduler $1 qos_scheduler
+}
+
+
+qos_start(){
+tc qdisc del dev $ODEV root 2>/dev/null
+tc qdisc del dev $IDEV1 root 2>/dev/null
+tc qdisc del dev $IDEV2 root 2>/dev/null
+tc qdisc add dev $ODEV root handle 10: htb default 256
+tc qdisc add dev $IDEV root handle 10: htb default 256
+#tc class add dev $ODEV parent 10: classid 10:1 htb rate ${UP}kbps ceil ${UP}kbps
+#tc class add dev $IDEV parent 10: classid 10:1 htb rate ${DOWN}kbps ceil ${DOWN}kbps
+}
+qos_stop(){
+tc qdisc del dev $ODEV1 root 2>/dev/null
+tc qdisc del dev $ODEV2 root 2>/dev/null
+tc qdisc del dev $IDEV root 2>/dev/null
+#iptables -t mangle -D PREROUTING -s $UIP.$i -j MARK --set-mark 2$i
+#iptables -t mangle -D PREROUTING -s $UIP.$i -j RETURN
+#iptables -t mangle -D POSTROUTING -d $UIP.$i -j MARK --set-mark 2$i
+#iptables -t mangle -D POSTROUTING -d $UIP.$i -j RETURN
+}
+
+#所有普通IP单独限速
+qos_ip_limit()
+{
+i=$(echo $limit_ip |cut  -d "." -f4)
+#m=$(printf "%x\n" $i)
+echo "$limit_ip start limit"
+tc class add dev $ODEV parent 10: classid 10:2$i htb rate ${UPLOADC}kbps ceil ${UPLOADC}kbps prio 1
+tc qdisc add dev $ODEV parent 10:2$i handle 100$i: pfifo
+tc filter add dev $ODEV parent 10: protocol ip prio 1 u32 match ip src $UIP.$i flowid 10:2$i
+#tc filter add dev $ODEV parent 10: protocol ip prio 1 u32 match ip dst $UIP.$i flowid 10:2$i
+
+tc class add dev $IDEV parent 10: classid 10:2$i htb rate ${DOWNLOADC}kbps ceil ${DOWNLOADC}kbps prio 1
+tc qdisc add dev $IDEV parent 10:2$i handle 100$i: pfifo
+#tc filter add dev $IDEV parent 10: protocol ip prio 1 u32 match ip src $UIP.$i flowid 10:2$i
+tc filter add dev $IDEV parent 10: protocol ip prio 1 u32 match ip dst $UIP.$i flowid 10:2$i
+
+#iptables -t mangle -A PREROUTING -s $UIP.$i -j MARK --set-mark 2$i
+#iptables -t mangle -A PREROUTING -s $UIP.$i -j RETURN
+#iptables -t mangle -A POSTROUTING -d $UIP.$i -j MARK --set-mark 2$i
+#iptables -t mangle -A POSTROUTING -d $UIP.$i -j RETURN
+echo "$limit_ip end limit"
+}
+
+qos_limit_ip_get(){
+ config_get enable $1 enable
+ config_get limit_ip $1 limit_ip
+ config_get ip_prio $1 ip_prio
+ config_get UPLOADC $1 UPLOADC
+ config_get DOWNLOADC $1 DOWNLOADC
+ echo "enable=$enable limit_ip=$limit_ip ip_prio=$ip_prio UPLOADC=$UPLOADC DOWNLOADC=$DOWNLOADC"
+ [ "$enable" == "1" ]&&qos_ip_limit
+
+}
+
+#所有mac单独限速
+qos_mac_limit()
+{
+limit_ip=`grep $limit_mac /proc/net/arp | awk '{print $1}'` 
+if [ ! $limit_ip ]; then
+	echo $limit_mac null
+	return
+else
+	echo $limit_mac $limit_ip
+fi
+
+i=$(echo $limit_ip |cut  -d "." -f4)
+if [ ! $i ]; then
+	echo $limit_ip illegal
+	return
+fi
+
+#m=$(printf "%x\n" $i)
+echo "$limit_ip start limit"
+tc class add dev $ODEV parent 10: classid 10:2$i htb rate ${UPLOADC}kbps ceil ${UPLOADC}kbps prio 1
+tc qdisc add dev $ODEV parent 10:2$i handle 100$i: pfifo
+tc filter add dev $ODEV parent 10: protocol ip prio 1 u32 match ip src $UIP.$i flowid 10:2$i
+#tc filter add dev $ODEV parent 10: protocol ip prio 1 u32 match ip dst $UIP.$i flowid 10:2$i
+
+tc class add dev $IDEV parent 10: classid 10:2$i htb rate ${DOWNLOADC}kbps ceil ${DOWNLOADC}kbps prio 1
+tc qdisc add dev $IDEV parent 10:2$i handle 100$i: pfifo
+#tc filter add dev $IDEV parent 10: protocol ip prio 1 u32 match ip src $UIP.$i flowid 10:2$i
+tc filter add dev $IDEV parent 10: protocol ip prio 1 u32 match ip dst $UIP.$i flowid 10:2$i
+
+#iptables -t mangle -A PREROUTING -s $UIP.$i -j MARK --set-mark 2$i
+#iptables -t mangle -A PREROUTING -s $UIP.$i -j RETURN
+#iptables -t mangle -A POSTROUTING -d $UIP.$i -j MARK --set-mark 2$i
+#iptables -t mangle -A POSTROUTING -d $UIP.$i -j RETURN
+echo "$limit_ip end limit"
+}
+
+qos_limit_mac_get(){
+ config_get enable $1 enable
+ config_get limit_mac $1 limit_mac
+ config_get UPLOADC $1 UPLOADC
+ config_get DOWNLOADC $1 DOWNLOADC
+ echo "enable=$enable limit_mac=$limit_mac ip_prio=$ip_prio UPLOADC=$UPLOADC DOWNLOADC=$DOWNLOADC"
+ [ "$enable" == "1" ]&&qos_mac_limit
+
+}
+
+
+case $1 in
+    start) 
+		lan_net
+		config_load qosv4
+		qos_stop >/dev/null 2>&1
+		echo "start qos v4........"
+		config_foreach qos_config_get qos_settings
+		echo "qosv4 enable=$enable " 
+		if [ "$enable" == "1" ];then
+				load_modules
+				qos_start
+				#config_foreach qos_limit_ip_get qos_ip
+				config_foreach qos_limit_mac_get qos_mac
+		else
+				qos_stop >/dev/null 2>&1
+		fi
+	;;
+	stop)
+		qos_stop >/dev/null 2>&1
+	;;
+esac
+

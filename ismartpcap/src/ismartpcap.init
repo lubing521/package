@@ -1,0 +1,17 @@
+#!/bin/sh /etc/rc.common
+# (C) 2008 openwrt.org
+
+START=99
+STOP=99
+
+start() {
+        [ -x /usr/bin/ismartpcap ] && ismartpcap -d
+}
+
+stop() {
+        killall ismartpcap
+}
+
+boot() {
+	sleep 60 && start "$@" &
+}
