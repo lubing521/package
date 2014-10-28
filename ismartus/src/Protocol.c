@@ -8,7 +8,7 @@
 #include <sys/sysinfo.h>
 #include "PublicMethod.h"
 #include "NetComm.h"
-#include "SpiComm.h"
+#include "SerialComm.h"
 #include "Protocol.h"
 #include "Common.h"
 #include "List.h"
@@ -82,8 +82,8 @@ typedef struct Item
 static ISmartFrame *g_iSmartNetFrame = NULL;
 static int g_iSmartNetFrameSize = 0;
 static struct sockaddr_in *g_iSmartNetFrameFrom = NULL;
-static ISmartFrame *g_iSmartSpiFrame = NULL;
-static int g_iSmartSpiFrameSize = 0;
+static ISmartFrame *g_iSmartSerialFrame = NULL;
+static int g_iSmartSerialFrameSize = 0;
 static unsigned char g_SourceMac[8] = {0};
 static int g_enSourceMacFlag = SourceMacNoInit;/*sourcemac初始化标志*/
 static struct in_addr g_RegServerAddr = {0};
@@ -124,7 +124,7 @@ int SendFrameToCrlServer(ISmartFrame *pISMartFrame, unsigned int nLen);
 int SendFrameToRegServer(ISmartFrame *pISMartFrame, unsigned int nLen);
 int SendFrameToDataServer(ISmartFrame *pISMartFrame, unsigned int nLen);
 int SendFrameToNet(ISmartFrame *pISMartFrame, unsigned int nLen);
-int SendFrameToSpi(ISmartFrame *pISMartFrame, unsigned int nLen);
+int SendFrameToSerial(ISmartFrame *pISMartFrame, unsigned int nLen);
 int PackXinTiao(ISmartFrame *pISMartFrame);
 int PackInitCtrServer(ISmartFrame *pISMartFrame);
 int PackBroadcastDiscovery(ISmartFrame *pISMartFrame);
@@ -132,8 +132,8 @@ int PackInitSourceMac(ISmartFrame *pISMartFrame);
 int PackGatewayNodeRet(ISmartFrame *pISMartFrame, unsigned int *pnLen);
 int PackQueryNode(ISmartFrame *pISMartFrame, PNode pnode);
 //int DealNetProtocol(unsigned char *pData, int nLen, struct sockaddr_in *pNetRecvBuffFrom);
-//int DealSpiProtocol(unsigned char *pData, int nLen);
-int MangleSpiPackage();
+//int DealSerialProtocol(unsigned char *pData, int nLen);
+int MangleSerialPackage();
 int MangleNetPackage();
 int FilterBroadcastDiscovery(ISmartFrame *pISMartFrame);
 int FilterCtlServerGet(ISmartFrame *pISMartFrame);
@@ -181,7 +181,7 @@ void *pthreadNode(void *arg)
 		{
 			Item *item = pnode->data;
 			TRACE("QueryNode %d:%02x%02x\n", GetListSize(g_pNodeList), item->mac[0], item->mac[1]);
-			SendFrameToSpi(&QueryNode, PACKAGE_SIZE_HEAD);
+			SendFrameToSerial(&QueryNode, PACKAGE_SIZE_HEAD);
 			pnode = pnode->next;
 		}
 		else
@@ -191,6 +191,7 @@ void *pthreadNode(void *arg)
 		#endif
 		usleep(FRE_QUERY_NODE);
 	}
+	return NULL;
 }
 
 void *pthreadXinTiao (void *arg)
@@ -289,7 +290,7 @@ int InitRegServerAddr()
 	char str[32] = {0};
 	if(NULL == (pHostReg = gethostbyname(REG_SERVRE_DOMAIN)))
 	{
-		TRACEERR("gethostbyname error for host:%s\n", REG_SERVRE_DOMAIN);
+		perror("gethostbyname");
 		return ReturnError; 
 	}
 	if (AF_INET !=  pHostReg->h_addrtype)
@@ -306,7 +307,7 @@ int InitCtlServerAddr()
 	ISmartFrame oSendFrame = {{0}};
 	if (ReturnError == PackInitCtrServer(&oSendFrame))
 	{
-		TRACE("PackInitCtrServer fail!!\n");
+		TRACEERR("PackInitCtrServer fail!!\n");
 		return ReturnError;
 	}
 	TRACE("PackInitCtrServer success!!\n");
@@ -321,7 +322,7 @@ int InitSourceMac()
 	{
 		return ReturnError;
 	}
-	SendFrameToSpi(&oSendFrame, PACKAGE_SIZE_INITSRCMAC);
+	SendFrameToSerial(&oSendFrame, PACKAGE_SIZE_INITSRCMAC);
 	return ReturnSuccess;
 }
 
@@ -583,13 +584,13 @@ int SendFrameToNet(ISmartFrame *pISMartFrame, unsigned int nLen)
 		(char *)pISMartFrame, nLen);
 }
 
-int SendFrameToSpi(ISmartFrame *pISMartFrame, unsigned int nLen)
+int SendFrameToSerial(ISmartFrame *pISMartFrame, unsigned int nLen)
 {
 	if (NULL == pISMartFrame)
 	{
 		return ReturnError;
 	}
-	return SendDataToSpi((char *)pISMartFrame, nLen);
+	return SendDataToSerial((char *)pISMartFrame, nLen);
 }
 
 int PackXinTiao(ISmartFrame *pISMartFrame)
@@ -703,7 +704,12 @@ int PackGatewayNodeRet(ISmartFrame *pISMartFrame, unsigned int *pnLen)
 		/*前四个字节直接填充*/
 		memcpy((void *)(pISMartFrame->data + 5 * i), (void *)(pnode->data), 4);
 		/*第五个字节,需要用当前时间减去存储的时间,以获取时间差*/
-		*(pISMartFrame->data + 5*i + 4) = (char)(GetUptime() - ((Item *)(pnode->data))->ntime);
+		long time = (char)(GetUptime() - ((Item *)(pnode->data))->ntime);
+		if (time > 255)
+		{
+			time = 255;
+		}
+		*(pISMartFrame->data + 5*i + 4) = time;
 	}
 	
 	return ReturnSuccess;
@@ -775,44 +781,44 @@ int DealNetProtocol(unsigned char *pData, int nLen, struct sockaddr_in *pNetRecv
 	return MangleNetPackage();
 }
 
-int DealSpiProtocol(unsigned char *pData, int nLen)
+int DealSerialProtocol(unsigned char *pData, int nLen)
 {
-	TRACE("DealSpiProtocol\n");
+	TRACE("DealSerialProtocol\n");
 	if (NULL == pData || nLen < PACKAGE_SIZE_HEAD)
 	{
 		return ReturnError;
 	}
-	g_iSmartSpiFrame = (ISmartFrame *)pData;
-	g_iSmartSpiFrameSize = nLen;
-	if(ReturnError == CheckAA55(g_iSmartSpiFrame))
+	g_iSmartSerialFrame = (ISmartFrame *)pData;
+	g_iSmartSerialFrameSize = nLen;
+	if(ReturnError == CheckAA55(g_iSmartSerialFrame))
 	{
 		TRACEERR("CheckAA55 fail\n");
 		return ReturnError;
 	}
-	if(ReturnError == CheckCRC(g_iSmartSpiFrame))
+	if(ReturnError == CheckCRC(g_iSmartSerialFrame))
 	{
 		//return ReturnError;
 	}
 	
-	return MangleSpiPackage();	
+	return MangleSerialPackage();	
 }
 
-int MangleSpiPackage()
+int MangleSerialPackage()
 {
-	TRACE("funCode(S):%02x,%02x,%02x\n", g_iSmartSpiFrame->funCode.dev, g_iSmartSpiFrame->funCode.ver, g_iSmartSpiFrame->funCode.fun);
-	if (ReturnSuccess == FilterGetSourceMac(g_iSmartSpiFrame))
+	TRACE("funCode(S):%02x,%02x,%02x\n", g_iSmartSerialFrame->funCode.dev, g_iSmartSerialFrame->funCode.ver, g_iSmartSerialFrame->funCode.fun);
+	if (ReturnSuccess == FilterGetSourceMac(g_iSmartSerialFrame))
 	{
 		TRACE("Filter GetSourceMac success\n");
 		return ReturnSuccess;
 	}
-	if (ReturnSuccess == FilterQueryNodeRet(g_iSmartSpiFrame))
+	if (ReturnSuccess == FilterQueryNodeRet(g_iSmartSerialFrame))
 	{
 		TRACE("Filter NodeStatus success\n");
 		return ReturnSuccess;
 	}
 	struct in_addr addr = {0};
 	inet_aton(QUERYNODE_IP, &addr);
-	if (0 == CheckExistIP(g_iSmartSpiFrame))
+	if (0 == CheckExistIP(g_iSmartSerialFrame))
 	{
 		/*IP不存在,转发给控制服务器*/
 		TRACE("frame ip not exist!!!!!\n");
@@ -822,7 +828,7 @@ int MangleSpiPackage()
 		}
 		return SendFrameToCrlServer(g_iSmartNetFrame, g_iSmartNetFrameSize);
 	}
-	else if (0 == memcmp(g_iSmartSpiFrame->ip, (void *)&addr, sizeof (struct in_addr)))
+	else if (0 == memcmp(g_iSmartSerialFrame->ip, (void *)&addr, sizeof (struct in_addr)))
 	{
 		/*如果IP等于QUERYNODE_IP:1.2.3.4,说明是网关发出的查询节点包的返回,不处理*/
 		TRACE("frame ip 1.2.3.4!!!!!\n");
@@ -831,7 +837,7 @@ int MangleSpiPackage()
 
 	/*IP合法,将帧发向该IP*/
 	TRACE("frame ip exist!!!!!\n");
-	return SendFrameToNet(g_iSmartSpiFrame, g_iSmartSpiFrameSize);
+	return SendFrameToNet(g_iSmartSerialFrame, g_iSmartSerialFrameSize);
 }
 
 int MangleNetPackage()
@@ -861,7 +867,7 @@ int MangleNetPackage()
 		return ReturnSuccess;
 	}
 
-	return SendFrameToSpi(g_iSmartNetFrame, g_iSmartNetFrameSize);
+	return SendFrameToSerial(g_iSmartNetFrame, g_iSmartNetFrameSize);
 }
 
 int FilterBroadcastDiscovery(ISmartFrame *pISMartFrame)

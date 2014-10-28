@@ -3,20 +3,20 @@
 #include <unistd.h>
 #include <string.h>
 #include "Common.h"
-#include "SpiComm.h"
+#include "SerialComm.h"
 #include "NetComm.h"
 #include "Protocol.h"
 
-static unsigned char g_szRecvSpiBuff[SIZE_SPI_RECV_BUFF] = {0};
-static unsigned int g_nRecvSpiBuffSize = 0;
+static unsigned char g_szRecvSerialBuff[SIZE_SERIAL_RECV_BUFF] = {0};
+static unsigned int g_nRecvSerialBuffSize = 0;
 
 static unsigned char g_szRecvNetBuff[SIZE_NET_RECV_BUFF] = {0};
 static unsigned int g_nRecvNetBuffSize = 0;
 static struct sockaddr_in g_oRecvNetBuffFrom = {0,0,{0},{0}};
 
-int CallBackRecvSpiFun()
+int CallBackRecvSerialFun()
 {
-	return DealSpiProtocol(g_szRecvSpiBuff, g_nRecvSpiBuffSize);
+	return DealSerialProtocol(g_szRecvSerialBuff, g_nRecvSerialBuffSize);
 }
 
 int CallBackRecvNetFun()
@@ -67,22 +67,22 @@ int main(int argc, char *argv[])
 		init_daemon();
 	}
 
-	//spi相关初始化
+	//serial相关初始化
 	//设备尚未连接的时候打不开,需要实时检测设备是否连接.
 	/*
-	if(0 >= SpiOpen())
+	if(0 >= SerialOpen())
 	{
-		TRACEERR("spi dev open fail\n");
+		TRACEERR("serial dev open fail\n");
 		exit(ReturnError);
 	}
 	*/
-	SpiInit();
-	SetCallbackRecvSpiFun(CallBackRecvSpiFun);
-	SetCallbackRecvSpiBuff(g_szRecvSpiBuff);
-	SetCallbackRecvSpiBuffSize(&g_nRecvSpiBuffSize);
-	if (ReturnError == SpiStartListen())
+	SerialInit();
+	SetCallbackRecvSerialFun(CallBackRecvSerialFun);
+	SetCallbackRecvSerialBuff(g_szRecvSerialBuff);
+	SetCallbackRecvSerialBuffSize(&g_nRecvSerialBuffSize);
+	if (ReturnError == SerialStartListen())
 	{
-		TRACEERR("spi start listen fail\n");
+		TRACEERR("serial start listen fail\n");
 		exit(ReturnError);
 	}
 

@@ -8,15 +8,15 @@
 #include <sys/time.h>
 #include "Common.h"
 #include "Queue.h"
-#include "SpiComm.h"
+#include "SerialComm.h"
 #include "Protocol.h"
 
 
-static int g_hSpiDevFd = 0;
-static CALLBACK_RECV_SPI_FUN g_pRecvSpiFun = NULL;
+static int g_hSerialDevFd = 0;
+static CALLBACK_RECV_SERIAL_FUN g_pRecvSerialFun = NULL;
 static pthread_t g_ptListen = 0;
-static unsigned char *g_pRecvSpiBuff = NULL;
-static unsigned int *g_pRecvSpiBuffSize = NULL;
+static unsigned char *g_pRecvSerialBuff = NULL;
+static unsigned int *g_pRecvSerialBuffSize = NULL;
 static pthread_mutex_t g_hRdWrMutex = PTHREAD_MUTEX_INITIALIZER;
 static int g_PrintSirial = 0; /*串口通信帧,16进制打印*/
 static Queue *g_WriteQueue = NULL;
@@ -29,24 +29,24 @@ static pthread_t g_ptWriteSerial = 0;
 int ReadChar(unsigned char *pChar)
 {
 	
-	if (g_hSpiDevFd <= 0)
+	if (g_hSerialDevFd <= 0)
 	{
 		TRACEERR("dev not open\n");
 		return ReturnError;
 	}
 	//TRACE("ReadChar before\n");
 	//pthread_mutex_lock(&g_hRdWrMutex);
-	//tcflush(g_hSpiDevFd, TCIFLUSH);
+	//tcflush(g_hSerialDevFd, TCIFLUSH);
 		//gettimeofday(&tvs2, NULL);
 	/*read 只有一个线程执行，不需要锁*/
-	if (0 >= read(g_hSpiDevFd, pChar, 1))
+	if (0 >= read(g_hSerialDevFd, pChar, 1))
 	{
 		g_nReadErr++;
 		TRACEERR("read return err\n");
 		if (READ_ERR_NUM <= g_nReadErr)
 		{
 			TRACEERR("us unlink\n");
-			SpiClose();
+			SerialClose();
 			ClearInitSourceMac(); /*清除网关mac和远程服务器信息,换网关需要重新注册才可用*/
 			//ClearNodeList(); /*不清除节点信息*/
 		}
@@ -69,14 +69,14 @@ static void* pthreadListen (void* arg)
 	unsigned int nNum = 0;
 	while(1)
 	{
-		//memset(g_pRecvSpiBuff, 0, SIZE_SPI_RECV_BUFF);
+		//memset(g_pRecvSerialBuff, 0, SIZE_serial_RECV_BUFF);
 		//TRACE("start read\n");
-		if (g_hSpiDevFd <= 0)
+		if (g_hSerialDevFd <= 0)
 		{
-			TRACEERR("spi dev not open\n");
-			if(access(SPI_DEV, R_OK | W_OK)==0)
+			TRACEERR("serial dev not open\n");
+			if(access(SERIAL_DEV, R_OK | W_OK)==0)
 			{
-				if (0 >= SpiOpen())
+				if (0 >= SerialOpen())
 				{
 					sleep(ACCESS_DEV);
 					continue;
@@ -92,11 +92,11 @@ static void* pthreadListen (void* arg)
 		if (0 == nWrite)
 		{
 			//TRACE("all new\n");
-			g_pRecvSpiBuff[0] = 0;
-			ReadChar(g_pRecvSpiBuff + nWrite);
-			//TRACE("g_pRecvSpiBuff[0]:%u\n", (unsigned int)g_pRecvSpiBuff[0]);
+			g_pRecvSerialBuff[0] = 0;
+			ReadChar(g_pRecvSerialBuff + nWrite);
+			//TRACE("g_pRecvSerialBuff[0]:%u\n", (unsigned int)g_pRecvSerialBuff[0]);
 			//TRACE("%u\n", PACKAGE_HEDAH);
-			if (PACKAGE_HEDAH == g_pRecvSpiBuff[0])
+			if (PACKAGE_HEDAH == g_pRecvSerialBuff[0])
 			{
 				gettimeofday(&tvs, NULL);
 				nWrite = 1;
@@ -110,12 +110,12 @@ static void* pthreadListen (void* arg)
 		}
 		if (1 == nWrite)
 		{
-			ReadChar(g_pRecvSpiBuff + nWrite);
-			if (0x55 == g_pRecvSpiBuff[1])
+			ReadChar(g_pRecvSerialBuff + nWrite);
+			if (0x55 == g_pRecvSerialBuff[1])
 			{
 				nWrite = 2;
 			}
-			else if (0xaa == g_pRecvSpiBuff[1])
+			else if (0xaa == g_pRecvSerialBuff[1])
 			{
 				nWrite = 1;
 				continue;
@@ -126,10 +126,10 @@ static void* pthreadListen (void* arg)
 				continue;
 			}
 		}
-		ReadChar(g_pRecvSpiBuff + nWrite);
+		ReadChar(g_pRecvSerialBuff + nWrite);
 		nWrite++;
-		ReadChar(g_pRecvSpiBuff + nWrite);
-		unsigned int nLen = ntohs(*(uint16_t *)(g_pRecvSpiBuff + 2));
+		ReadChar(g_pRecvSerialBuff + nWrite);
+		unsigned int nLen = ntohs(*(uint16_t *)(g_pRecvSerialBuff + 2));
 		//TRACE("nLen:%d\n", nLen);
 		if (nLen >= sizeof(ISmartFrame))
 		{
@@ -140,22 +140,22 @@ static void* pthreadListen (void* arg)
 		unsigned int i = 0;
 		for (i = 0; i < nLen - 4; i++)
 		{
-			ReadChar(g_pRecvSpiBuff + 4 + i);
+			ReadChar(g_pRecvSerialBuff + 4 + i);
 		}
 
-		//ReadChars(g_pRecvSpiBuff, nLen - 4);
+		//ReadChars(g_pRecvSerialBuff, nLen - 4);
 		gettimeofday(&tve, NULL);
 		TRACE("Read us zhen %u: %ld####\n", nNum, (tve.tv_sec - tvs.tv_sec)*1000000 + tve.tv_usec - tvs.tv_usec);
 		nNum++;
 		nWrite = 0;
-		*g_pRecvSpiBuffSize = nLen;
+		*g_pRecvSerialBuffSize = nLen;
 		if (g_PrintSirial)
 		{
 			TRACE("read serial####\n");
-			PrintDataBy16(g_pRecvSpiBuff, nLen);
+			PrintDataBy16(g_pRecvSerialBuff, nLen);
 		}
 		gettimeofday(&tvs, NULL);
-		(*g_pRecvSpiFun)();
+		(*g_pRecvSerialFun)();
 		gettimeofday(&tve, NULL);
 		TRACE("Deal us zhen: %ld####\n", (tve.tv_sec - tvs.tv_sec)*1000000 + tve.tv_usec - tvs.tv_usec);
 
@@ -163,18 +163,18 @@ static void* pthreadListen (void* arg)
 
 #if 0
 		//pthread_mutex_lock(&g_hRdWrMutex);
-		int ret = read(g_hSpiDevFd, g_pRecvSpiBuff, 1);
+		int ret = read(g_hSerialDevFd, g_pRecvSerialBuff, 1);
 		//pthread_mutex_unlock(&g_hRdWrMutex);
 		if (ret >= PACKAGE_SIZE_HEAD)
 		{
-			TRACE("spi read frame:%d!\n", ret);
-			*g_pRecvSpiBuffSize = ret;
+			TRACE("serial read frame:%d!\n", ret);
+			*g_pRecvSerialBuffSize = ret;
 			/*int i = 0;
 			for (i = 0; i < ret; i++)
 			{
-				TRACE("%02X", (unsigned char)g_pRecvSpiBuff[i]);
+				TRACE("%02X", (unsigned char)g_pRecvSerialBuff[i]);
 			}*/
-			(*g_pRecvSpiFun)();
+			(*g_pRecvSerialFun)();
 		}
 #endif
 		//usleep(READ_FREQUENCY);
@@ -191,15 +191,15 @@ static void* pthreadWriteSerial (void* arg)
 		pnode = GetFront(g_WriteQueue);
 		if (pnode)
 		{
-			if (g_hSpiDevFd > 0)
+			if (g_hSerialDevFd > 0)
 			{
 				TRACE("write serial####%d\n", pnode->nlen);
 				if (g_PrintSirial)
 				{
 					PrintDataBy16((unsigned char *)pnode->data, pnode->nlen);
 				}
-				write(g_hSpiDevFd, pnode->data, pnode->nlen);
-				tcflush(g_hSpiDevFd, TCOFLUSH);
+				write(g_hSerialDevFd, pnode->data, pnode->nlen);
+				tcflush(g_hSerialDevFd, TCOFLUSH);
 				/*出队列,入队列,不能同时执行*/
 				pthread_mutex_lock(&g_hRdWrMutex);
 				DeQueue(g_WriteQueue);
@@ -213,45 +213,45 @@ static void* pthreadWriteSerial (void* arg)
 	return NULL;
 }
 
-int SetCallbackRecvSpiFun(CALLBACK_RECV_SPI_FUN pRecvSpiFun)
+int SetCallbackRecvSerialFun(CALLBACK_RECV_SERIAL_FUN pRecvSerialFun)
 {
-	if (NULL == pRecvSpiFun)
+	if (NULL == pRecvSerialFun)
 	{
 		return ReturnError;
 	}
-	g_pRecvSpiFun = pRecvSpiFun;
+	g_pRecvSerialFun = pRecvSerialFun;
 	return ReturnSuccess;
 }
 
-int SetCallbackRecvSpiBuff(unsigned char *pRecvSpiBuff)
+int SetCallbackRecvSerialBuff(unsigned char *pRecvSerialBuff)
 {
-	if (NULL == pRecvSpiBuff)
+	if (NULL == pRecvSerialBuff)
 	{
 		return ReturnError;
 	}
-	g_pRecvSpiBuff = pRecvSpiBuff;
+	g_pRecvSerialBuff = pRecvSerialBuff;
 	return ReturnSuccess;
 }
 
-int SetCallbackRecvSpiBuffSize(unsigned int *pRecvSpiBuffSize)
+int SetCallbackRecvSerialBuffSize(unsigned int *pRecvSerialBuffSize)
 {
-	if (NULL == pRecvSpiBuffSize)
+	if (NULL == pRecvSerialBuffSize)
 	{
 		return ReturnError;
 	}
-	g_pRecvSpiBuffSize = pRecvSpiBuffSize;
+	g_pRecvSerialBuffSize = pRecvSerialBuffSize;
 	return ReturnSuccess;
 	
 }
 
 
-int SendDataToSpi(char *pData, unsigned int nLen)
+int SendDataToSerial(char *pData, unsigned int nLen)
 {
 	if (NULL == pData)
 	{
 		return ReturnError;
 	}
-	if (g_hSpiDevFd <= 0)
+	if (g_hSerialDevFd <= 0)
 	{
 		/*设备移除,不允许加入队列*/
 		return ReturnError;
@@ -267,9 +267,9 @@ int SendDataToSpi(char *pData, unsigned int nLen)
 	return ReturnSuccess;
 }
 
-int SpiStartListen()
+int SerialStartListen()
 {
-	if (NULL == g_pRecvSpiFun || NULL == g_pRecvSpiBuff /*|| g_hSpiDevFd <= 0*/)
+	if (NULL == g_pRecvSerialFun || NULL == g_pRecvSerialBuff /*|| g_hSerialDevFd <= 0*/)
 	{
 		return ReturnError;
 	}
@@ -277,12 +277,12 @@ int SpiStartListen()
 	{
 		return ReturnError;
 	}
-	TRACE("spi listen pthread create\n");
+	TRACE("serial listen pthread create\n");
 	return ReturnSuccess;
 	
 }
 
-int SpiInit()
+int SerialInit()
 {
 	g_WriteQueue = InitQueue();
 	pthread_mutex_init(&g_hRdWrMutex,NULL);
@@ -295,22 +295,22 @@ int SpiInit()
 	return ReturnSuccess;
 }
 
-int SpiOpen() 
+int SerialOpen() 
 {
-	if (g_hSpiDevFd <= 0)
+	if (g_hSerialDevFd <= 0)
 	{
-		g_hSpiDevFd = open(SPI_DEV, O_RDWR | O_NOCTTY | O_NDELAY);
-		if (g_hSpiDevFd <= 0)
+		g_hSerialDevFd = open(SERIAL_DEV, O_RDWR | O_NOCTTY | O_NDELAY);
+		if (g_hSerialDevFd <= 0)
 		{
 			//perror("open");
 			return ReturnError;
 		}
 	}
 	struct termios options;
-	tcgetattr(g_hSpiDevFd, &options);
-    fcntl(g_hSpiDevFd, F_SETFL, 0); /*阻塞*/
+	tcgetattr(g_hSerialDevFd, &options);
+    fcntl(g_hSerialDevFd, F_SETFL, 0); /*阻塞*/
     //options.c_cflag |= (CLOCAL | CREAD);
-    /*fcntl(g_hSpiDevFd, F_SETFL, FNDELAY);*/ /*非阻塞*/
+    /*fcntl(g_hSerialDevFd, F_SETFL, FNDELAY);*/ /*非阻塞*/
     /*baud tates*/
     //cfsetispeed(&options,B38400);
     //cfsetospeed(&options,B38400);
@@ -328,18 +328,18 @@ int SpiOpen()
 	options.c_oflag = 0;
 	options.c_iflag = IGNPAR; /*无奇偶校验*/
 
-    tcsetattr(g_hSpiDevFd, TCSANOW, &options);
-	return g_hSpiDevFd;
+    tcsetattr(g_hSerialDevFd, TCSANOW, &options);
+	return g_hSerialDevFd;
 }
 
-int SpiClose()
+int SerialClose()
 {
-	if (g_hSpiDevFd <= 0)
+	if (g_hSerialDevFd <= 0)
 	{
 		return ReturnError;
 	}
-	close(g_hSpiDevFd);
-	g_hSpiDevFd = 0;
+	close(g_hSerialDevFd);
+	g_hSerialDevFd = 0;
 	return ReturnSuccess;
 }
 

@@ -39,7 +39,7 @@ typedef struct ISmartFrame
 
 int ProtocolInit();
 int DealNetProtocol(unsigned char *pData, int nLen, struct sockaddr_in *pNetRecvBuffFrom);
-int DealSpiProtocol(unsigned char *pData, int nLen);
+int DealSerialProtocol(unsigned char *pData, int nLen);
 int ClearInitSourceMac();
 int ClearNodeList();
 
