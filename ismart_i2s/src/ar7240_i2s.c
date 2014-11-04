@@ -57,7 +57,7 @@
 
 int ar7240_i2s_major = 253;
 int ar7240_i2s_minor = 0;
-
+struct class *i2sclass = NULL;
 
 module_param(ar7240_i2s_major, int, S_IRUGO);
 module_param(ar7240_i2s_minor, int, S_IRUGO);
@@ -991,6 +991,8 @@ void ar7240_i2s_cleanup_module(void)
 
 	free_irq(sc->sc_irq, NULL);
 	unregister_chrdev(ar7240_i2s_major, "ath_i2s");
+	device_destroy(i2sclass, MKDEV(ar7240_i2s_major, ar7240_i2s_minor));
+	class_destroy(i2sclass);
 }
 
 int ar7240_i2s_init_module(void)
@@ -1016,6 +1018,14 @@ int ar7240_i2s_init_module(void)
 		       ar7240_i2s_major);
 		return result;
 	}
+
+	i2sclass = class_create(THIS_MODULE, "ar9331_i2s");
+	if(IS_ERR(i2sclass)) 
+	{
+		printk("Err: failed in creating class./n");
+		return -1; 
+	}
+	device_create(i2sclass, NULL, MKDEV(ar7240_i2s_major, ar7240_i2s_minor), NULL, "i2s");
 
 	sc->sc_irq = AR7240_MISC_IRQ_DMA;
 

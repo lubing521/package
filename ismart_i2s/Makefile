@@ -27,7 +27,7 @@ define KernelPackage/ismart_i2s/description
 endef
 
 EXTRA_KCONFIG:= \
-	CONFIG_ATH934X_I2S=m
+	CONFIG_AR9331_I2S=m
 
 EXTRA_CFLAGS:= \
 	$(patsubst CONFIG_%, -DCONFIG_%=1, $(patsubst %=m,%,$(filter %=m,$(EXTRA_KCONFIG)))) \
@@ -37,8 +37,8 @@ MAKE_OPTS:= \
 	ARCH="$(LINUX_KARCH)" \
 	CROSS_COMPILE="$(TARGET_CROSS)" \
 	SUBDIRS="$(PKG_BUILD_DIR)" \
-#	EXTRA_CFLAGS="$(EXTRA_CFLAGS)" \
-#    $(EXTRA_KCONFIG)
+	EXTRA_CFLAGS="$(EXTRA_CFLAGS)" \
+	$(EXTRA_KCONFIG)
 
 define Build/Prepare
 	mkdir -p $(PKG_BUILD_DIR)
