@@ -38,7 +38,7 @@ define Package/$(PKG_NAME)
 	CATEGORY:=Utilities
 	TITLE:=Helloworld -- prints a snarky message
 	MAINTAINER:=dengjunyong
-	DEPENDS:=
+	DEPENDS:=+alsa-lib
 endef
 
 # Uncomment portion below for Kamikaze and delete DESCRIPTION variable above
@@ -72,6 +72,7 @@ define Package/$(PKG_NAME)/install
 	$(INSTALL_DIR) $(1)/usr/bin
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/athplay $(1)/usr/bin/
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/i2sconf $(1)/usr/bin/
+	$(INSTALL_BIN) $(PKG_BUILD_DIR)/alsa $(1)/usr/bin/
 endef
 
 # This line executes the necessary commands to compile our program.

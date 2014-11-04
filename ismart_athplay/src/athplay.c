@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <strings.h>
+#include <string.h>
 #include <errno.h>
 #include <sys/signal.h>
 #include <sys/types.h>
@@ -243,7 +244,7 @@ playwav (int fd)
 		return EINVAL;
 	}
 
-	printf("header:%d\n", sizeof(hdr));
+	printf("header:%lu\n", sizeof(hdr));
 	read(fd, &hdr, sizeof (hdr));
 
 #if __BYTE_ORDER == __BIG_ENDIAN
@@ -270,10 +271,10 @@ playwav (int fd)
 //	u_short		bit_p_spl;	/* 8, 12 or 16 bit */
 //	u_char		pad[2];
 //	scdata_t	sc;
-	printf("RIFF ,main_chunk:%u\n", hdr.main_chunk);
+	printf("RIFF ,main_chunk:%s\n", (char *)&hdr.main_chunk);
 	printf("Length of rest of file ,length:%u\n", hdr.length);
-	printf("WAVE, chunk_type:%u\n", hdr.chunk_type);
-	printf("fmt, sub_chunk:%u\n", hdr.sub_chunk);
+	printf("WAVE, chunk_type:%s\n", (char *)&hdr.chunk_type);
+	printf("fmt, sub_chunk:%s\n", (char *)&hdr.sub_chunk);
 	printf("length of sub_chunk, sc_len:%u\n", hdr.sc_len);
 	printf("should be 1 for PCM-code, format:%u\n", hdr.format);
 	printf("1 Mono 2 Stereo, modus:%u\n", hdr.modus);
@@ -304,29 +305,45 @@ playwav (int fd)
 	sc.data_chunk = bswap_32 (sc.data_chunk);
 	sc.data_length = bswap_32 (sc.data_length);
 #endif
-	printf("sc.data_chunk:%u\n", sc.data_chunk);
+	printf("sc.data_chunk:%s\n", (char *)&sc.data_chunk);
 	printf("sc.data_length:%u\n", sc.data_length);
 
 	if (bufsz <= 0) {
 		bufsz = BUFF_SIZE;
 	}
+	printf("bufsz:%d\n", bufsz);
 
-	if (ioctl(audio, I2S_DSIZE, hdr.bit_p_spl) < 0) {
+	printf("ioctl I2S_DSIZE begin:fd %d, %u\n", audio, hdr.bit_p_spl);
+	int ioctlret = ioctl(audio, I2S_DSIZE, hdr.bit_p_spl);
+	printf("ioctl I2S_DSIZE : %d\n", ioctlret);
+	if (ioctlret < 0) {
 		perror("I2S_DSIZE");
 	}
 
-	if (ioctl(audio, I2S_FREQ, hdr.sample_fq) < 0) {
+	ioctlret = ioctl(audio, I2S_FREQ, hdr.sample_fq);
+	printf("ioctl I2s_FREQ : %d\n", ioctlret);
+	if (ioctlret < 0) {
 		perror("I2S_FREQ");
 	}
 
+	ioctlret = ioctl(audio, I2S_VOLUME, 5);
+	printf("ioctl I2S_VOLUME : %d\n", ioctlret);
+	if (ioctlret < 0) {
+		perror("I2S_VOLUME");
+	}
+
     if (mclk_sel) {
-	    if (ioctl(audio, I2S_MCLK, mclk_sel) < 0) {
+		ioctlret = ioctl(audio, I2S_MCLK, mclk_sel);
+		printf("ioctl I2s_MCLK : %d\n", ioctlret);
+	    if (ioctlret < 0) {
 	    	perror("I2S_MCLK");
 	    }
 	}
 
+	printf("malloc:%lu\n", bufsz * sizeof(char));
 	audiodata = (char *) malloc (bufsz * sizeof (char));
 	if (audiodata == NULL) {
+		perror("malloc");
 		return ENOMEM;
 	}
 
