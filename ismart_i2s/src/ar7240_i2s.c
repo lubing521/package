@@ -18,6 +18,7 @@
 #include <linux/dma-mapping.h>
 #include <linux/wait.h>
 #include <linux/interrupt.h>
+#include <linux/i2c.h>
 //#include <linux/config.h>
 
 
@@ -150,6 +151,119 @@ void i2s_clear_stats(void)
    stats.tasklet_count = 0;
    stats.repeat_count = 0;
 }EXPORT_SYMBOL(i2s_clear_stats);
+
+enum wmdac_type {        /* keep sorted in alphabetical order */
+	wm8918,
+};
+static const struct i2c_device_id wm8918_ids[] = {
+    { "wm8918", wm8918, }, //该i2c_driver所支持的i2c_client
+    { /* LIST END */ }
+};
+MODULE_DEVICE_TABLE(i2c, wm8918_ids); //来告知用户空间, 模块支持那些设备
+static const unsigned short normal_i2c[] = {0x1A, I2C_CLIENT_END };
+struct i2c_client *wm8918_i2c_client = NULL;
+//低8位和高8位互换
+static u16 wm8918_swap(u16 data)
+{
+	u16 tmp = (data << 8) & 0xff00;
+	tmp = tmp | ((data >> 8) & 0x00ff);
+	return tmp;
+}
+static int wm8918_probe(struct i2c_client *client, const struct i2c_device_id *id)
+{
+	int ret;
+	wm8918_i2c_client = client;
+	printk(KERN_CRIT "probe, i2c_clist*:%p\n", client);
+	printk(KERN_CRIT "i2c_clist->addr:%x\n", client->addr);
+	printk(KERN_CRIT "i2c_clist->flag:%u\n", client->flags);
+
+	ret = i2c_smbus_read_word_data(client, 0x0);
+	printk(KERN_CRIT "read %04x from 0x00\n", wm8918_swap(ret));
+
+	//i2c_smbus_write_word_data()小端传输,先b7-b0,后b15-b8. wm8918是大端
+    i2c_smbus_write_word_data(client, 0x00, wm8918_swap(0x0000));
+    i2c_smbus_write_word_data(client, 0x16, wm8918_swap(0x0006));
+    i2c_smbus_write_word_data(client, 0x6C, wm8918_swap(0x0100));
+    i2c_smbus_write_word_data(client, 0x6F, wm8918_swap(0x0100));
+	mdelay(500); //延迟一会,否则设置失败.至少延迟300ms,设置250ms失败,设置为300ms成功
+    i2c_smbus_write_word_data(client, 0x14, wm8918_swap(0x845E));
+    i2c_smbus_write_word_data(client, 0x39, wm8918_swap(0x0039));
+    i2c_smbus_write_word_data(client, 0x3A, wm8918_swap(0x00B9));
+    i2c_smbus_write_word_data(client, 0x21, wm8918_swap(0x0000));
+    i2c_smbus_write_word_data(client, 0x68, wm8918_swap(0x0005));
+    i2c_smbus_write_word_data(client, 0x19, wm8918_swap(0x0002));
+//    i2c_smbus_write_word_data(client, 0x1E, wm8918_swap(0x01C0));
+//    i2c_smbus_write_word_data(client, 0x1F, wm8918_swap(0x01C0));
+#if 0
+	mdelay(1000);
+	ret = i2c_smbus_read_word_data(client, 0x00);
+	printk(KERN_CRIT "read %04x from 0x00\n", wm8918_swap(ret));
+
+	ret = i2c_smbus_read_word_data(client, 0x16);
+	printk(KERN_CRIT "read %04x from 0x16\n", wm8918_swap(ret));
+
+	ret = i2c_smbus_read_word_data(client, 0x6C);
+	printk(KERN_CRIT "read %04x from 0x6C\n", wm8918_swap(ret));
+
+	ret = i2c_smbus_read_word_data(client, 0x6F);
+	printk(KERN_CRIT "read %04x from 0x6F\n", wm8918_swap(ret));
+
+
+	ret = i2c_smbus_read_word_data(client, 0x14);
+	printk(KERN_CRIT "read %04x from 0x14\n", wm8918_swap(ret));
+
+	ret = i2c_smbus_read_word_data(client, 0x39);
+	printk(KERN_CRIT "read %04x from 0x39\n", wm8918_swap(ret));
+
+	ret = i2c_smbus_read_word_data(client, 0x3A);
+	printk(KERN_CRIT "read %04x from 0x3A\n", wm8918_swap(ret));
+
+	ret = i2c_smbus_read_word_data(client, 0x21);
+	printk(KERN_CRIT "read %04x from 0x21\n", wm8918_swap(ret));
+
+	ret = i2c_smbus_read_word_data(client, 0x68);
+	printk(KERN_CRIT "read %04x from 0x68\n", wm8918_swap(ret));
+
+	ret = i2c_smbus_read_word_data(client, 0x18);
+	printk(KERN_CRIT "read %04x from 0x18\n", wm8918_swap(ret));
+
+	ret = i2c_smbus_read_word_data(client, 0x19);
+	printk(KERN_CRIT "read %04x from 0x19\n", wm8918_swap(ret));
+
+	ret = i2c_smbus_read_word_data(client, 0x1A);
+	printk(KERN_CRIT "read %04x from 0x1A\n", wm8918_swap(ret));
+
+	ret = i2c_smbus_read_word_data(client, 0x1B);
+	printk(KERN_CRIT "read %04x from 0x1B\n", wm8918_swap(ret));
+
+	ret = i2c_smbus_read_word_data(client, 0x1E);
+	printk(KERN_CRIT "read %04x from 0x1E\n", wm8918_swap(ret));
+
+	ret = i2c_smbus_read_word_data(client, 0x1F);
+	printk(KERN_CRIT "read %04x from 0x1F\n", wm8918_swap(ret));
+#endif
+	return 0;
+}
+static int wm8918_remove(struct i2c_client *client)
+{
+	printk(KERN_CRIT "remove, i2c_clist*:%p\n", client);
+	return 0;
+}
+static int wm8918_detect(struct i2c_client *new_client, struct i2c_board_info *info)
+{
+	return 0;
+}
+static struct i2c_driver wm8918_driver = {
+    .class        = I2C_CLASS_HWMON,
+    .driver = {
+        .name     = "wm8918",
+    },
+    .probe        = wm8918_probe, //probe设备探测函数,i2c_add_driver()时会被调用 
+    .remove       = wm8918_remove,
+    .id_table     = wm8918_ids, //id_table成员用于设置当前i2c_driver所支持的设备类型
+    .detect       = wm8918_detect,
+    .address_list = normal_i2c,
+};
 
 int ar7240_i2s_init(struct file *filp)
 {
@@ -869,8 +983,7 @@ void ar7240_i2sound_i2slink_on(int master)
 
 //	rddata = (0x10 << 16) + 0x4fff; //  for 48000 x 2 bytes x 2 channels = 192000
 //	rddata = (0x11 << 16) + 0xc8ff; //  for 44100 x 2 bytes x 2 channels = 176400
-//	rddata = (0x11 << 16) + 0xb000; //  for 44100 x 2 bytes x 2 channels = 176400
-	rddata = (0x08 << 16) + 0x0000; //  for 96000 x 2 bytes x 2 channels = 384000
+	rddata = (0x11 << 16) + 0xb725; //  for 44100 x 2 bytes x 2 channels = 176400
 	ar7240_reg_wr(AR7240_STEREO_CLK_DIV, rddata);
 
     /*
@@ -907,9 +1020,9 @@ void ar7240_i2sound_dma_desc(unsigned long desc_buf_p, int mode)
 	 * RX_DMA_COMPLETE for mbox 0
 	 */
 	//sizeof(unsigned long) == 4Byte
-	printk("desc_buf_p:%u\n", desc_buf_p);
+	printk("desc_buf_p:%lu\n", desc_buf_p);
 	//long desc_buf_p = (desc_buf_p >> 4) & 0x0ffffffc;
-	printk("desc_buf_p:%u\n", desc_buf_p);
+	printk("desc_buf_p:%lu\n", desc_buf_p);
 	if (mode) {
 		ar7240_reg_wr(MBOX0_DMA_TX_DESCRIPTOR_BASE, desc_buf_p);
 	} else {
@@ -993,6 +1106,7 @@ void ar7240_i2s_cleanup_module(void)
 	unregister_chrdev(ar7240_i2s_major, "ath_i2s");
 	device_destroy(i2sclass, MKDEV(ar7240_i2s_major, ar7240_i2s_minor));
 	class_destroy(i2sclass);
+    i2c_del_driver(&wm8918_driver);
 }
 
 int ar7240_i2s_init_module(void)
@@ -1042,8 +1156,10 @@ int ar7240_i2s_init_module(void)
 
 	I2S_LOCK_INIT(sc);
 
+	//wm8918控制i2c接口
+    i2c_add_driver(&wm8918_driver);
 	/* 0x180b0000是物理地址,他在虚拟内存中的地址为0xb80b0000,下面两个打印相同 */
-	printk(KERN_CRIT "addr: %u, %u\n", KSEG1ADDR(0x180b0000), KSEG1ADDR(0xb80b0000));
+	printk(KERN_CRIT "%08x, %08x\n", KSEG1ADDR(0x180b0000), KSEG1ADDR(0xb80b0000));
 
 	return 0;		/* succeed */
 }
