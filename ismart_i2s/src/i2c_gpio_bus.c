@@ -1,13 +1,13 @@
 /******************************************************************
-** ÎÄ¼şÃû: i2c_gpio_bus.c
-** Copyright (c) 2014 ÉîÛÚ¹û¹ÈÖÇÄÜ¿Æ¼¼ÓĞÏŞ¹«Ë¾
-** ´´½¨ÈË:µË¿¡ÓÂ
-** ÈÕ  ÆÚ:2014.11.06
-** Ãè  Êö:gpioÄ£Äâi2c×ÜÏß,ÓÃÓÚwm8918¿ØÖÆ
-** °æ  ±¾: 1.0
+** æ–‡ä»¶å: i2c_gpio_bus.c
+** Copyright (c) 2014 æ·±åœ³æœè°·æ™ºèƒ½ç§‘æŠ€æœ‰é™å…¬å¸
+** åˆ›å»ºäºº:é‚“ä¿Šå‹‡
+** æ—¥  æœŸ:2014.11.06
+** æ  è¿°:gpioæ¨¡æ‹Ÿi2cæ€»çº¿,ç”¨äºwm8918æ§åˆ¶
+** ç‰ˆ  æœ¬: 1.0
 **-----------------------------------------------------------------------------
-** º¯  Êı:
-**ĞŞ¸Ä¼ÇÂ¼:
+** å‡½  æ•°:
+**ä¿®æ”¹è®°å½•:
 ******************************************************************/
 
 #include <linux/stddef.h>
@@ -23,9 +23,9 @@
 
 #include "ar7240.h"
 
-/* SDAÁ¬½Óµ½GPIO17*/
+/* SDAè¿æ¥åˆ°GPIO17*/
 #define GPIO_PIN_SDA 17
-/* SCLÁ¬½Óµ½GPIO1*/
+/* SCLè¿æ¥åˆ°GPIO1*/
 #define GPIO_PIN_SCL 1
 
 static struct i2c_pins {
@@ -96,7 +96,7 @@ struct i2c_algo_bit_data bit_data = {
 struct i2c_adapter i2c_gpio_adapter = {
 	.name           = "AR9331 I2C Adapter",
 	.class          = I2C_CLASS_HWMON | I2C_CLASS_SPD,
-	.algo_data      = &bit_data, //Ëã·¨algorithm
+	.algo_data      = &bit_data, //ç®—æ³•algorithm
 	.nr             = 5,
 };
 
@@ -107,7 +107,7 @@ static int __init i2c_init(void)
 //	unsigned int gpio_oe_val = 0, gpio_out_val = 0, gpio_func4_val = 0;
 	unsigned int gpio_oe_val = 0, gpio_out_val = 0;
 	
-	/*±£´æÅäÖÃÇ°GPIO register value */
+	/*ä¿å­˜é…ç½®å‰GPIO register value */
 	gpio_oe_val = ar7240_reg_rd(AR7240_GPIO_OE);
 	gpio_out_val = ar7240_reg_rd(AR7240_GPIO_OUT);
 //	gpio_func4_val = ar7240_reg_rd(ar7240_gpio_OUT_FUNCTION4);
@@ -126,7 +126,7 @@ static int __init i2c_init(void)
 	ret = ar7240_reg_rd(0x18040028);
 	printk("GPIO_FUN1:%08x\n", ret);
 
-	//³õÊ¼»¯Îª¸ßµçÆ½
+	//åˆå§‹åŒ–ä¸ºé«˜ç”µå¹³
 	ret = ar7240_reg_rd(AR7240_GPIO_IN);
 	printk("GPIO_IN  :%08x\n", ret);
     ar7240_gpio_out_val(gpio_data.scl_pin, 1);
@@ -135,7 +135,7 @@ static int __init i2c_init(void)
 	printk("GPIO_IN  :%08x\n", ret);
 
 	if ((res = i2c_bit_add_numbered_bus(&i2c_gpio_adapter) != 0)) {
-		/*»Ö¸´ÅäÖÃÇ°GPIO register value */
+		/*æ¢å¤é…ç½®å‰GPIO register value */
 		printk(KERN_INFO "TMP75 temprature sensor not exist.\n");
 		ar7240_reg_wr(AR7240_GPIO_OE, gpio_oe_val);
 		ar7240_reg_wr(AR7240_GPIO_OUT, gpio_out_val);
