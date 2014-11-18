@@ -171,14 +171,11 @@ static u16 wm8918_swap(u16 data)
 }
 static int wm8918_probe(struct i2c_client *client, const struct i2c_device_id *id)
 {
-	int ret;
+//	int ret;
 	wm8918_i2c_client = client;
-	printk(KERN_CRIT "probe, i2c_clist*:%p\n", client);
-	printk(KERN_CRIT "i2c_clist->addr:%x\n", client->addr);
-	printk(KERN_CRIT "i2c_clist->flag:%u\n", client->flags);
-
-	ret = i2c_smbus_read_word_data(client, 0x0);
-	printk(KERN_CRIT "read %04x from 0x00\n", wm8918_swap(ret));
+//	printk(KERN_CRIT "probe, i2c_clist*:%p\n", client);
+//	printk(KERN_CRIT "i2c_clist->addr:%x\n", client->addr);
+//	printk(KERN_CRIT "i2c_clist->flag:%u\n", client->flags);
 
 	//i2c_smbus_write_word_data()小端传输,先b7-b0,后b15-b8. wm8918是大端
     i2c_smbus_write_word_data(client, 0x00, wm8918_swap(0x0000));
@@ -246,7 +243,7 @@ static int wm8918_probe(struct i2c_client *client, const struct i2c_device_id *i
 }
 static int wm8918_remove(struct i2c_client *client)
 {
-	printk(KERN_CRIT "remove, i2c_clist*:%p\n", client);
+//	printk(KERN_CRIT "remove, i2c_clist*:%p\n", client);
 	return 0;
 }
 static int wm8918_detect(struct i2c_client *new_client, struct i2c_board_info *info)
@@ -1159,7 +1156,7 @@ int ar7240_i2s_init_module(void)
 	//wm8918控制i2c接口
     i2c_add_driver(&wm8918_driver);
 	/* 0x180b0000是物理地址,他在虚拟内存中的地址为0xb80b0000,下面两个打印相同 */
-	printk(KERN_CRIT "%08x, %08x\n", KSEG1ADDR(0x180b0000), KSEG1ADDR(0xb80b0000));
+//	printk(KERN_CRIT "%08x, %08x\n", KSEG1ADDR(0x180b0000), KSEG1ADDR(0xb80b0000));
 
 	return 0;		/* succeed */
 }

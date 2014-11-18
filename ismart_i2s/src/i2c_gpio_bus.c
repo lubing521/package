@@ -102,7 +102,7 @@ struct i2c_adapter i2c_gpio_adapter = {
 
 static int __init i2c_init(void)
 {
-	int ret;
+//	int ret;
 	int res = 0;
 //	unsigned int gpio_oe_val = 0, gpio_out_val = 0, gpio_func4_val = 0;
 	unsigned int gpio_oe_val = 0, gpio_out_val = 0;
@@ -120,19 +120,19 @@ static int __init i2c_init(void)
     ar7240_gpio_config_output(gpio_data.sda_pin);
 
 	//Disables the Ethernet Switch LED data on GPIO_17
-	ret = ar7240_reg_rd(0x18040028);
-	printk("GPIO_FUN1:%08x\n", ret);
+//	ret = ar7240_reg_rd(0x18040028);
+//	printk("GPIO_FUN1:%08x\n", ret);
 	ar7240_reg_rmw_clear(0x18040028, 0x80);
-	ret = ar7240_reg_rd(0x18040028);
-	printk("GPIO_FUN1:%08x\n", ret);
+//	ret = ar7240_reg_rd(0x18040028);
+//	printk("GPIO_FUN1:%08x\n", ret);
 
 	//初始化为高电平
-	ret = ar7240_reg_rd(AR7240_GPIO_IN);
-	printk("GPIO_IN  :%08x\n", ret);
+//	ret = ar7240_reg_rd(AR7240_GPIO_IN);
+//	printk("GPIO_IN  :%08x\n", ret);
     ar7240_gpio_out_val(gpio_data.scl_pin, 1);
     ar7240_gpio_out_val(gpio_data.sda_pin, 1);
-	ret = ar7240_reg_rd(AR7240_GPIO_IN);
-	printk("GPIO_IN  :%08x\n", ret);
+//	ret = ar7240_reg_rd(AR7240_GPIO_IN);
+//	printk("GPIO_IN  :%08x\n", ret);
 
 	if ((res = i2c_bit_add_numbered_bus(&i2c_gpio_adapter) != 0)) {
 		/*恢复配置前GPIO register value */
