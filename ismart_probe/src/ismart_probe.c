@@ -67,6 +67,72 @@ void *thread_channel(void *arg)
 	return NULL;
 }
 
+void *thread_post(void *arg)
+{
+	pthread_detach(pthread_self());
+	while(1)
+	{
+		sleep(2*60);
+		//w+ 打开可读写文件，若文件存在则文件长度清为零，即该文件内容会消失。若文件不存在则建立该文件
+		FILE *fp = fopen("/tmp/maclist.txt", "w+");
+		if (NULL == fp)
+		{
+			break;
+		}
+		char buf[128] = {0};
+
+		struct ifreq ifreq;
+		int sock;
+		if((sock=socket(AF_INET,SOCK_STREAM,0))<0)
+        {
+                perror("socket");
+                break;
+        }
+		strcpy(ifreq.ifr_name, dev);
+		if(ioctl(sock,SIOCGIFHWADDR,&ifreq)<0)
+        {
+                perror("ioctl");
+                break;
+        }
+		sprintf(buf, "mac=%02x:%02x:%02x:%02x:%02x:%02x",
+						(unsigned char)ifreq.ifr_hwaddr.sa_data[0],
+                        (unsigned char)ifreq.ifr_hwaddr.sa_data[1],
+                        (unsigned char)ifreq.ifr_hwaddr.sa_data[2],
+                        (unsigned char)ifreq.ifr_hwaddr.sa_data[3],
+                        (unsigned char)ifreq.ifr_hwaddr.sa_data[4],
+                        (unsigned char)ifreq.ifr_hwaddr.sa_data[5]);
+		fwrite(buf, 1, strlen(buf), fp);
+
+		PNode pnode = GetListFront(MacList);
+		int i = 0;
+		for (; NULL != pnode; pnode = pnode->next)
+		{
+			i++;
+			memset(buf, 0, sizeof(buf));
+//			if (1 == i)
+//			{
+//				sprintf(buf, "%d={\"mac\":\"%02x:%02x:%02x:%02x:%02x:%02x\",\"firsttime\":\"0\",\"leavetime\":\"0\"}", i,
+//					((unsigned char *)pnode->data)[0], ((unsigned char *)pnode->data)[1],
+//					((unsigned char *)pnode->data)[2], ((unsigned char *)pnode->data)[3],
+//					((unsigned char *)pnode->data)[4], ((unsigned char *)pnode->data)[5]);
+//			}
+//			else
+//			{
+				//多了&
+				sprintf(buf, "&%d={\"mac\":\"%02x:%02x:%02x:%02x:%02x:%02x\",\"firsttime\":\"0\",\"leavetime\":\"0\"}", i,
+					((unsigned char *)pnode->data)[0], ((unsigned char *)pnode->data)[1],
+					((unsigned char *)pnode->data)[2], ((unsigned char *)pnode->data)[3],
+					((unsigned char *)pnode->data)[4], ((unsigned char *)pnode->data)[5]);
+//			}
+			fwrite(buf, 1, strlen(buf), fp);
+		}
+		fclose(fp);
+		system("maclist=$(cat /tmp/maclist.txt) && wget -O /dev/null --post-data=$maclist http://boxdata.aijee.cn/wifidetect.php");
+		ClearList(MacList);
+	}
+	return NULL;
+}
+
 int cmp_router_list(void *mac)
 {
 	unsigned int i = 0;
@@ -165,7 +231,11 @@ void *thread_ctl(void*arg)
 			}
 			else if (strncmp(request, "size", 4) == 0)
 			{
-				ep("All mac number: %d\n", MacList->size);
+				ep("all mac number: %d\n", MacList->size);
+			}
+			else
+			{
+				ep("unknow request cmd\n");
 			}
 		}
 	}
@@ -315,7 +385,7 @@ void init_router_list()
 	FILE *fd = fopen("/etc/router.txt", "r");
 	if (NULL == fd)
 	{
-		perror("fopen");
+		perror("fopen /etc/router.txt");
 		return;
 	}
 	ssize_t read = 0;
@@ -324,7 +394,6 @@ void init_router_list()
 	//统计有效行数
 	while(-1 != (read = getline(&line, &len, fd)))
 	{
-		dp("count:%lu\n", read);
 		if (read == 7 && 0 == check_mac(line))
 		{
 			dp("line OK\n");
@@ -425,6 +494,12 @@ int main(int argc, char *argv[])
 	//创建改变channel的线程
 	pthread_t threadid;
 	if(0 != pthread_create(&threadid, NULL, thread_channel, NULL))
+	{
+		perror("pthread_create");
+		exit(1);
+	}
+
+	if(0 != pthread_create(&threadid, NULL, thread_post, NULL))
 	{
 		perror("pthread_create");
 		exit(1);
