@@ -17,8 +17,8 @@ define KernelPackage/ismart_i2s
 	SUBMENU:=i2s modules
 	TITLE:=Atheros 933X I2S module
 	DEPENDS:=
-#	FILES:=$(PKG_BUILD_DIR)/ar7240_i2s.ko $(PKG_BUILD_DIR)/ar9331_i2s.c
-	FILES:=$(PKG_BUILD_DIR)/ar7240_i2s.ko
+	FILES:=$(PKG_BUILD_DIR)/ar7240_i2s.ko $(PKG_BUILD_DIR)/i2c_gpio_bus.ko
+#	FILES:=$(PKG_BUILD_DIR)/ar7240_i2s.ko
 	KCONFIG:=
 endef
 
