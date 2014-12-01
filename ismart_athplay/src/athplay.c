@@ -326,11 +326,11 @@ playwav (int fd)
 		perror("I2S_FREQ");
 	}
 
-	ioctlret = ioctl(audio, I2S_VOLUME, 5);
-	printf("ioctl I2S_VOLUME : %d\n", ioctlret);
-	if (ioctlret < 0) {
-		perror("I2S_VOLUME");
-	}
+//	ioctlret = ioctl(audio, I2S_VOLUME, 5);
+//	printf("ioctl I2S_VOLUME : %d\n", ioctlret);
+//	if (ioctlret < 0) {
+//		perror("I2S_VOLUME");
+//	}
 
     if (mclk_sel) {
 		ioctlret = ioctl(audio, I2S_MCLK, mclk_sel);
@@ -387,6 +387,9 @@ eagain:
         tmpcount = count;                                       
         data = audiodata;                                       
         ret = 0;                                                
+        struct timeval start;
+        struct timeval stop;
+        gettimeofday( &start, NULL );
         do {                                                    
             ret = write(audio, data, tmpcount);                     
             if (ret < 0 && errno == EAGAIN) {                       
@@ -396,6 +399,10 @@ eagain:
             tmpcount = tmpcount - ret;                              
             data += ret;                                            
         } while(tmpcount);                                      
+        gettimeofday( &stop, NULL );
+        // 176400/768=230,2*2*44100音频数据每秒要write230次,4.353741ms就要write一次,cpu占用率高
+        // 使用-t参数把size设置大一些可以减少cpu占用率
+        dp("write us:%d\n", 1000000 * ( stop.tv_sec - start.tv_sec ) + stop.tv_usec - start.tv_usec);
 #endif
 		dp("i = %d\n", i);
 //		printf("i = %d\n", i);

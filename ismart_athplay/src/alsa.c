@@ -18,8 +18,8 @@
 #include <stdlib.h>
 
 /**alsa play test
-*ALSA用户空间编译，ALSA驱动的声卡在用户空间，不宜直接使用
-*文件接口中，而应使用alsa-lib
+*ALSA用户空间编译,ALSA驱动的声卡在用户空间,不宜直接使用
+*文件接口中,而应使用alsa-lib
 *打开---->设置参数--->读写音频数据 ALSA全部使用alsa-lib中的API
 *交叉编译
 *export LD_LIBRARY_PATH=$PWD:$LD_LIBRARY_PATH
@@ -149,7 +149,8 @@ int main(int argc, char *argv[])
 	snd_pcm_hw_params_t *hw_params;//硬件信息和PCM流配置
 	u_char      *tmp;
 
-	device_list();
+	//打印所有alsa设备列表
+	//device_list();
 
 	if (argc != 2) {
 		printf("error: alsa_play_test [music name]\n");
@@ -193,8 +194,8 @@ int main(int argc, char *argv[])
 		return EINVAL;
 	}
 	
-	//1. 打开PCM，最后一个参数为0意味着标准配置
-	//snd_pcm_open参数SND_PCM_STREAM_CAPTURE与snd_pcm_readi相对应，SND_PCM_STREAM_PLAYBACK与snd_pcm_writei相对应
+	//1. 打开PCM,最后一个参数为0意味着标准配置
+	//snd_pcm_open参数SND_PCM_STREAM_CAPTURE与snd_pcm_readi相对应,SND_PCM_STREAM_PLAYBACK与snd_pcm_writei相对应
 	ret = snd_pcm_open(&playback_handle, "default", SND_PCM_STREAM_PLAYBACK, 0);
 	if (ret < 0) {
 		perror("snd_pcm_open");
@@ -243,9 +244,11 @@ int main(int argc, char *argv[])
 		exit(1);
 	}
 
-	//6. 设置采样率，如果硬件不支持我们设置的采样率，将使用最接近的
+	//6. 设置采样率,如果硬件不支持我们设置的采样率,将使用最接近的
 	//val = 44100,有些录音采样频率固定为8KHz
 	val = hdr.sample_fq;
+	//val = 96000;//设置频率高,播放声音也特别快
+	//val = 22050;//设置频率低,播放声音也特别慢,跟电池没电似的
 	ret = snd_pcm_hw_params_set_rate_near(playback_handle, hw_params, &val, &dir);
 	if (ret < 0) {
 		perror("snd_pcm_hw_params_set_rate_near");
@@ -258,26 +261,43 @@ int main(int argc, char *argv[])
 		perror("snd_pcm_hw_params_set_channels");
 		exit(1);
 	}
-	
-	/* Set period size to 32 frames. */
-    frames = 16*2*2;//每个sample占的字节数
-    periodsize = 32; //frames * 2;//alsa中将缓冲区分成多个period区，每个period存放若干个samples
-    ret = snd_pcm_hw_params_set_buffer_size_near(playback_handle, hw_params, &frames);
-	printf("set buffer:%lu\n", frames);
-    if (ret < 0) 
-    {
-         printf("Unable to set buffer size %li : %s\n", frames * 2, snd_strerror(ret));
-         
-    }
-//          periodsize /= 2;
 
-    ret = snd_pcm_hw_params_set_period_size_near(playback_handle, hw_params, &periodsize, 0);
-	printf("set period:%lu\n", periodsize);
-    if (ret < 0) 
-    {
-        printf("Unable to set period size %li : %s\n", periodsize,  snd_strerror(ret));
-    }
+//	/* Set period size to 32 frames. */
+//    frames = 16*2;//每个frame占的字节数
+//    periodsize = 64; //多少个frames;//alsa中将缓冲区分成多个period区,每个period存放若干个frame
+//    ret = snd_pcm_hw_params_set_buffer_size_near(playback_handle, hw_params, &frames);
+//	printf("set buffer:%lu\n", frames);
+//    if (ret < 0) 
+//    {
+//         printf("Unable to set buffer size %li : %s\n", frames * 2, snd_strerror(ret));
+//         
+//    }
+//
+//    ret = snd_pcm_hw_params_set_period_size_near(playback_handle, hw_params, &periodsize, 0);
+//	printf("set period:%lu \n", periodsize);
+//    if (ret < 0) 
+//    {
+//        printf("Unable to set period size %li : %s\n", periodsize,  snd_strerror(ret));
+//    }
 								  
+	/*  Set period size to 32 frames. */
+	frames = 32;
+	periodsize = frames * 2;
+	ret = snd_pcm_hw_params_set_buffer_size_near(playback_handle, hw_params, &periodsize);
+	printf("set buffer size %li \n", periodsize);
+	if (ret < 0)
+	{
+		printf("Unable to set buffer size %li : %s\n", frames * 2, snd_strerror(ret));
+	}
+	periodsize /= 2;
+	ret = snd_pcm_hw_params_set_period_size_near(playback_handle, hw_params, &periodsize, 0);
+	printf("set period size %li \n", periodsize);
+	if (ret < 0)
+	{
+		printf("Unable to set period size %li : %s\n", periodsize,  snd_strerror(ret));
+	}
+	
+	
 	//8. 设置hw_params
 	ret = snd_pcm_hw_params(playback_handle, hw_params);
 	if (ret < 0) {
@@ -286,15 +306,20 @@ int main(int argc, char *argv[])
 	}
 	
 	 /* Use a buffer large enough to hold one period */
-    snd_pcm_hw_params_get_period_size(hw_params, &periodsize, &dir);
-	printf("get period:%lu\n", periodsize);
-                                
-    size = periodsize * ((hdr.bit_p_spl * hdr.modus) / 8); /* 2 bytes/sample, 2 channels */
-    buffer = (char *) malloc(size);
-    fprintf(stderr,
-            "size = %d\n",
-            size);
-    
+//    snd_pcm_hw_params_get_period_size(hw_params, &periodsize, &dir);
+//	printf("get period:%lu\n", periodsize);
+//                                
+//    size = periodsize * ((hdr.bit_p_spl * hdr.modus) / 8); /* 2 bytes/sample, 2 channels */
+//    buffer = (char *) malloc(size);
+//    fprintf(stderr,
+//            "size = %d\n",
+//            size);
+ /* Use a buffer large enough to hold one period */
+	snd_pcm_hw_params_get_period_size(hw_params, &frames, &dir);
+	size = frames * 2; /* 2 bytes/sample, 2 channels */
+	buffer = (char *) malloc(size);
+	printf("size = %d\n", size);
+
     while (1) 
     {
         ret = fread(buffer, 1, size, fp);
@@ -314,7 +339,7 @@ int main(int argc, char *argv[])
             {
                   /* EPIPE means underrun */
                   fprintf(stderr, "underrun occurred\n");
-				  //完成硬件参数设置，使设备准备好
+				  //完成硬件参数设置,使设备准备好
                   snd_pcm_prepare(playback_handle);
             } 
             else
