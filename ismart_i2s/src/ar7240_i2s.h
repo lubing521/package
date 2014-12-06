@@ -1,3 +1,5 @@
+#ifndef _AR7240_I2S_H_
+#define _AR7240_I2S_H_
 //#include <asm/mach-ar7240/ar7240.h>
 #include <linux/delay.h>
 
@@ -145,3 +147,4 @@ typedef struct {
     unsigned int pad;
 } ar7240_mbox_dma_desc;
 
+#endif

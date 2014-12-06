@@ -31,6 +31,8 @@
 #include "i2sio.h"
 #include "ar7240.h"
 #include "ar7240_i2s.h"		/* local definitions */
+#include "ath79-pcm.h"
+#include "ar71xx_regs.h"
 
 /* Playback Default Stereo - Fl/Fr */
 static int p_chmask = 0x3;
@@ -157,7 +159,9 @@ typedef struct ar7240_i2s_softc {
 typedef struct snd_ar9331 {
     struct snd_card *card;
     struct snd_pcm *pcm;
-	struct snd_pcm_substream *substream;
+	struct snd_pcm_substream *playback;
+	struct snd_pcm_substream *capture;
+
 }snd_ar9331_t;
 
 snd_ar9331_t snd_chip;
@@ -1195,34 +1199,63 @@ long ar7240_i2s_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 //irqreturn_t ar7240_i2s_intr(int irq, void *dev_id, struct pt_regs *regs)
 irqreturn_t ar7240_i2s_intr(int irq, void *dev_id)
 {
-	uint32_t r;
-//        static u_int16_t tglFlg = 0;
+	uint32_t status;
+	struct ath79_pcm_rt_priv *rtpriv;
+	unsigned int period_bytes;
 
-	r = ar7240_reg_rd(MBOX_INT_STATUS);
-	#if 1 /* Hornet*/
-		/* No LED on Hornet */
-	#else /* Wasp*/
-        if (r & MBOX0_RX_DMA_COMPLETE) {
-            if (tglFlg) {
-                ar7240_reg_wr(AR7240_GPIO_SET, 1<< 6);
-            } else {
-                ar7240_reg_wr(AR7240_GPIO_CLEAR, 1<< 6);
-            }
-            tglFlg = !tglFlg;
-        }
-	#endif
+	status = ar7240_reg_rd(MBOX_INT_STATUS);
 
-    if(r & RX_UNDERFLOW)
-        stats.rx_underflow++;
+//    if(status & RX_UNDERFLOW)
+//        stats.rx_underflow++;
 
-	/* Ack the interrupts */
-	ar7240_reg_wr(MBOX_INT_STATUS, r);
-    if (NULL != snd_chip.substream)
-    {
-        snd_pcm_period_elapsed(snd_chip.substream);
-    }
 
-	printk("intrupt\n");
+	if(status & MBOX0_RX_DMA_COMPLETE) {
+		unsigned int played_size;
+        printk("MBOX0_RX_DMA_COMPLETE\n");
+		rtpriv = snd_chip.playback->runtime->private_data;
+		/* Store the last played buffer in the runtime priv struct */
+		rtpriv->last_played = ath79_pcm_get_last_played(rtpriv);
+		period_bytes = snd_pcm_lib_period_bytes(snd_chip.playback);
+
+
+		played_size = ath79_pcm_set_own_bits(rtpriv);
+		if(played_size > period_bytes)
+			snd_printd("Played more than one period  bytes played: %d\n",played_size);
+		rtpriv->elapsed_size += played_size;
+
+//		ath79_mbox_interrupt_ack(AR934X_DMA_MBOX_INT_STATUS_RX_DMA_COMPLETE);
+
+		if(rtpriv->elapsed_size >= period_bytes)
+		{
+            printk("elapsed_size:%d, played_size:%d, period_bytes:%d\n", rtpriv->elapsed_size, played_size, period_bytes);
+			rtpriv->elapsed_size %= period_bytes;
+			snd_pcm_period_elapsed(snd_chip.playback);
+		}
+
+		if (rtpriv->last_played == NULL) {
+			snd_printd("BUG: ISR called but no played buf found\n");
+			goto ack;
+		}
+
+	}
+	if(status & AR934X_DMA_MBOX_INT_STATUS_TX_DMA_COMPLETE) {
+		rtpriv = snd_chip.capture->runtime->private_data;
+		/* Store the last played buffer in the runtime priv struct */
+		rtpriv->last_played = ath79_pcm_get_last_played(rtpriv);
+		ath79_pcm_set_own_bits(rtpriv);
+//		ath79_mbox_interrupt_ack(AR934X_DMA_MBOX_INT_STATUS_TX_DMA_COMPLETE);
+
+		if (rtpriv->last_played == NULL) {
+			snd_printd("BUG: ISR called but no rec buf found\n");
+			goto ack;
+		}
+		snd_pcm_period_elapsed(snd_chip.capture);
+	}
+
+ack:
+    /* Ack the interrupts */
+    ar7240_reg_wr(MBOX_INT_STATUS, status);
+	printk("intrupt:%x\n", status);
 	return IRQ_HANDLED;
 }
 
@@ -1360,6 +1393,7 @@ void ar7240_i2sound_dma_pause(int mode)
     } else {
         ar7240_reg_wr(MBOX0_DMA_RX_CONTROL, PAUSE);
     }
+
 }
 EXPORT_SYMBOL(ar7240_i2sound_dma_pause);
 
@@ -1448,26 +1482,27 @@ struct snd_pcm_hardware ar7240_i2s_alsa_pcm_hardware =
 //	.period_bytes_max = 4095,
 //	.periods_min = 16,
 //	.periods_max = 256,
-	.buffer_bytes_max = 2*768,
+	.buffer_bytes_max = 4*768,
 	.period_bytes_min = 768,
 	.period_bytes_max = 768,
-	.periods_min = 2,
-	.periods_max = 2,
+	.periods_min = 4,
+	.periods_max = 4,
 	.fifo_size = 0,
 };
 
 static int ar7240_i2s_alsa_pcm_open(struct snd_pcm_substream *substream)
 {
 	int ret;
-    int mode = 0; //playback
-    int need_start = 0;
+//    int mode = 0; //playback
+//    int need_start = 0;
+	struct ath79_pcm_rt_priv *rtpriv;
 	struct snd_pcm_runtime *runtime = substream->runtime;
-	struct snd_dma_buffer *buf = &substream->dma_buffer;
-    snd_chip.substream = substream;
+//	struct snd_dma_buffer *buf = &substream->dma_buffer;
+    snd_chip.playback = substream;
 	ar7240_i2s_softc_t *sc = &sc_buf_var;
 	unsigned long desc_p = (unsigned long) sc->sc_pbuf.db_desc_p;
-	runtime->hw = ar7240_i2s_alsa_pcm_hardware;
 
+	runtime->hw = ar7240_i2s_alsa_pcm_hardware;
 
 	/* ensure buffer_size is a multiple of period_size */  
 	ret = snd_pcm_hw_constraint_integer(runtime, SNDRV_PCM_HW_PARAM_PERIODS);
@@ -1477,29 +1512,45 @@ static int ar7240_i2s_alsa_pcm_open(struct snd_pcm_substream *substream)
 		return ret;
 	}
 
-	ret = ar7240_i2s_open_for_pcm(substream);
-	if (ret < 0)
-	{
-		printk(KERN_CRIT "open fail:%d\n", ret);
-		return ret;
+	/* Allocate/Initialize the buffer linked list head */
+	rtpriv = kmalloc(sizeof(*rtpriv), GFP_KERNEL);
+	if (!rtpriv) {
+		return -ENOMEM;
 	}
-	if (sc->popened < 2) {
-        ar7240_reg_rmw_set(MBOX_INT_ENABLE, MBOX0_RX_DMA_COMPLETE | RX_UNDERFLOW);
-		need_start = 1;
-	}
-    sc->popened = 2;
+	snd_printd("%s: 0x%xB allocated at 0x%08x\n",
+	       __FUNCTION__, sizeof(*rtpriv), (u32) rtpriv);
 
-	if (need_start) {
-		ar7240_i2sound_dma_desc((unsigned long) desc_p, mode);
-		ar7240_i2sound_dma_start(mode);
-	}
+	substream->runtime->private_data = rtpriv;
+	rtpriv->last_played = NULL;
+	INIT_LIST_HEAD(&rtpriv->dma_head);
+	if(substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
+		rtpriv->direction = SNDRV_PCM_STREAM_PLAYBACK;
+	else
+		rtpriv->direction = SNDRV_PCM_STREAM_CAPTURE;
 
-	buf->dev.type = SNDRV_DMA_TYPE_DEV;
-	buf->dev.dev = substream->pcm->card->dev;
-	buf->private_data = NULL;
-	buf->bytes = ar7240_i2s_alsa_pcm_hardware.buffer_bytes_max;
-
-    buf->area = (unsigned char *)(sc->sc_pmall_buf);
+//	ret = ar7240_i2s_open_for_pcm(substream);
+//	if (ret < 0)
+//	{
+//		printk(KERN_CRIT "open fail:%d\n", ret);
+//		return ret;
+//	}
+//	if (sc->popened < 2) {
+//        ar7240_reg_rmw_set(MBOX_INT_ENABLE, MBOX0_RX_DMA_COMPLETE | RX_UNDERFLOW);
+//		need_start = 1;
+//	}
+//    sc->popened = 2;
+//
+//	if (need_start) {
+//		ar7240_i2sound_dma_desc((unsigned long) desc_p, mode);
+//		ar7240_i2sound_dma_start(mode);
+//	}
+//
+//	buf->dev.type = SNDRV_DMA_TYPE_DEV;
+//	buf->dev.dev = substream->pcm->card->dev;
+//	buf->private_data = NULL;
+//	buf->bytes = ar7240_i2s_alsa_pcm_hardware.buffer_bytes_max;
+//
+//    buf->area = (unsigned char *)(sc->sc_pmall_buf);
 //    buf->addr = sc->sc_pbuf.db_desc_p;
 
 //	buf->area = dma_alloc_coherent(NULL, buf->bytes,
@@ -1514,8 +1565,18 @@ static int ar7240_i2s_alsa_pcm_open(struct snd_pcm_substream *substream)
 static int ar7240_i2s_alsa_pcm_close(struct snd_pcm_substream *substream)
 {
     int ret;
-    snd_chip.substream = NULL;
-	ret = ar7240_i2s_close_for_pcm(substream);
+	struct ath79_pcm_rt_priv *rtpriv;
+
+	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
+		snd_chip.playback = NULL;
+	} else {
+		snd_chip.capture = NULL;
+	}
+
+	rtpriv = substream->runtime->private_data;
+	kfree(rtpriv);
+
+//	ret = ar7240_i2s_close_for_pcm(substream);
 	printk(KERN_CRIT "pcm close:%d\n", ret);
 	return ret;
 }
@@ -1541,79 +1602,140 @@ static void print_hwparams(struct snd_pcm_substream *substream,
 		snd_pcm_format_width(params_format(p)) / 8);
 
 }
-static int ar7240_i2s_alsa_pcm_hw_params(struct snd_pcm_substream *substream, struct snd_pcm_hw_params *params)
+static int 
+ar7240_i2s_alsa_pcm_hw_params(struct snd_pcm_substream *substream, struct snd_pcm_hw_params *hw_params)
 {
-	struct snd_pcm_runtime *runtime = substream->runtime;
 //	snd_pcm_set_runtime_buffer(substream, &substream->dma_buffer);
 //	runtime->dma_bytes = params_buffer_bytes(params);
-	ar7240_i2s_softc_t *sc = &sc_buf_var;
+//	ar7240_i2s_softc_t *sc = &sc_buf_var;
 
-    int ret = 0;
+	struct snd_pcm_runtime *runtime = substream->runtime;
+	struct ath79_pcm_rt_priv *rtpriv;
+	int ret;
+	unsigned int period_size, sample_size, sample_rate, frames, channels;
+
+	// Does this routine need to handle new clock changes in the hw_params?
+	rtpriv = runtime->private_data;
+
+	ret = ath79_mbox_dma_map(rtpriv, substream->dma_buffer.addr,
+		params_period_bytes(hw_params), params_buffer_bytes(hw_params));
+
+	if(ret < 0)
+		return ret;
+
+	period_size = params_period_bytes(hw_params);
+	sample_size = snd_pcm_format_size(params_format(hw_params), 1);
+	sample_rate = params_rate(hw_params);
+	channels = params_channels(hw_params);
+	frames = period_size / (sample_size * channels);
+
+/* 	When we disbale the DMA engine, it could be just at the start of a descriptor.
+	Hence calculate the longest time the DMA engine could be grabbing bytes for to
+	Make sure we do not unmap the memory before the DMA is complete.
+	Add 10 mSec of margin. This value will be used in ath79_mbox_dma_stop */
+
+	rtpriv->delay_time = (frames * 1000)/sample_rate + 10;
+
+
+	snd_pcm_set_runtime_buffer(substream, &substream->dma_buffer);
+	runtime->dma_bytes = params_buffer_bytes(hw_params);
+
     //snd_pcm_lib_malloc_pages()仅仅当DMA缓冲区已经被预分配之后(snd_pcm_lib_preallocate_pages_for_all)才可以用。
     //采用标准的内存分配函数snd_pcm_lib_malloc_pages(),就不再需要自己设定DMA缓冲区信息
 //    ret = snd_pcm_lib_malloc_pages(substream,
 //					params_buffer_bytes(params));
-    print_hwparams(substream, params);
+    print_hwparams(substream, hw_params);
 //    runtime->dma_area = (unsigned char *)(sc->sc_pmall_buf);
 //    runtime->dma_addr = sc->sc_pbuf.db_desc_p;
 //    snd_pcm_write
-	snd_pcm_set_runtime_buffer(substream, &substream->dma_buffer);
+//	snd_pcm_set_runtime_buffer(substream, &substream->dma_buffer);
 	printk(KERN_CRIT "pcm hw_params:%d\n", ret);
-    return ret;
+	return 1;
 }
+
 static int ar7240_i2s_alsa_pcm_hw_free(struct snd_pcm_substream *substream)
 {
     int ret = 0;
 //	ret = snd_pcm_lib_free_pages(substream);
+	struct snd_pcm_runtime *runtime = substream->runtime;
+	struct ath79_pcm_rt_priv *rtpriv;
+
+	rtpriv = runtime->private_data;
+	ath79_mbox_dma_unmap(rtpriv);
+	snd_pcm_set_runtime_buffer(substream, NULL);
 	printk(KERN_CRIT "pcm hw_free:%d\n", ret);
     return ret;
 }
 static int ar7240_i2s_alsa_pcm_prepare(struct snd_pcm_substream *substream)
 {
     int ret = 0;
+	struct snd_pcm_runtime *runtime = substream->runtime;
+	struct ath79_pcm_rt_priv *rtpriv;
+
+	rtpriv = runtime->private_data;
+//	cpu_dai = rtd->cpu_dai;
+//	/* When setup the first stream should reset the DMA MBOX controller */
+//	if(cpu_dai->active == 1)
+//		ath79_mbox_dma_reset();
+
+	ath79_mbox_dma_prepare(rtpriv);
+
+	ath79_pcm_set_own_bits(rtpriv);
+	rtpriv->last_played = NULL;
 	printk(KERN_CRIT "pcm prepare:%d\n", ret);
 	return ret;
 }
 static int ar7240_i2s_alsa_pcm_trigger(struct snd_pcm_substream *substream, int cmd)
 {
     int data = 0;
-	ar7240_i2s_softc_t *sc = &sc_buf_var;
+	struct ath79_pcm_rt_priv *rtpriv = substream->runtime->private_data;
 	switch (cmd) {
 	case SNDRV_PCM_TRIGGER_START:
         ar7240_i2sound_dma_start(data);
-        if (data) {
-            sc->rpause = 1;
-        } else {
-            sc->ppause = 1;
-        }
+		snd_pcm_period_elapsed(snd_chip.playback);
 		break;
 	case SNDRV_PCM_TRIGGER_STOP:
         ar7240_i2sound_dma_pause(data);
-        if (data) {
-            sc->rpause = 0;
-        } else {
-            sc->ppause = 0;
-        }
+
+        /* Delay for the dynamically calculated max time based on
+        sample size, channel, sample rate + margin to ensure that the
+        DMA engine will be truly idle. */
+        mdelay(rtpriv->delay_time);
+
 		break;
 	case SNDRV_PCM_TRIGGER_RESUME:
         ar7240_i2sound_dma_resume(data);
-        if (data) {
-            sc->rpause = 0;
-        } else {
-            sc->ppause = 0;
-        }
 		break;
 	default:
 		return -EINVAL;
 	}
-	printk(KERN_CRIT "pcm trigger\n");
+	printk(KERN_CRIT "pcm trigger :%d\n", cmd);
 	return 0;
 }
 static snd_pcm_uframes_t ar7240_i2s_alsa_pcm_pointer(struct snd_pcm_substream *substream)
 {
-    snd_pcm_uframes_t ret = 0;
 	struct snd_pcm_runtime *runtime = substream->runtime;
+	struct ath79_pcm_rt_priv *rtpriv;
+    static int i = 0;
+	snd_pcm_uframes_t ret = 0;
+
+	rtpriv = runtime->private_data;
+
+	if(rtpriv->last_played == NULL)
+		ret = 0;
+	else
+		ret = rtpriv->last_played->BufPtr - runtime->dma_addr;
+
 	ret = bytes_to_frames(runtime, ret);
+    i++;
+    if (i%2)
+    {
+        ret = 192 * 2;
+    }
+    else
+    {
+        ret = 192;
+    }
 	printk(KERN_CRIT "pcm pointer:%lu\n", ret);
 	return ret;
 }
@@ -1649,19 +1771,71 @@ static struct snd_pcm_ops snd_933x_pcm_playback = {
     //.wall_clock = ar7240_i2s_alsa_pcm_wall_clock,
     //.copy = ,
     //.silence = ar7240_i2s_alsa_pcm_silence, //同copy,aio_write调用
-	.page    = ar7240_i2s_alsa_pcm_page, //这个函数也不是必须的。这个函数主要对那些不连续的缓存区。mmap会调用这个函数得到内存页的地址。
+	//.page    = ar7240_i2s_alsa_pcm_page, //这个函数也不是必须的。这个函数主要对那些不连续的缓存区。mmap会调用这个函数得到内存页的地址。
 	.mmap    = ar7240_i2s_alsa_pcm_mmap,
     .ack     = ar7240_i2s_alsa_pcm_ack, //这个函数也不是必须的。当在读写操作的时候更新appl_ptr的时候会调用它。
 };
+
+static void ath79_pcm_free_dma_buffers(struct snd_pcm *pcm)
+{
+	struct snd_pcm_substream *ss;
+	struct snd_dma_buffer *buf;
+	int stream;
+
+	for (stream = 0; stream < 2; stream++) {
+		ss = pcm->streams[stream].substream;
+		if (!ss)
+			continue;
+		buf = &ss->dma_buffer;
+		if (!buf->area)
+			continue;
+		dma_free_coherent(NULL, buf->bytes,
+				      buf->area, buf->addr);
+        printk("dma_free_coherent\n");
+		buf->area = NULL;
+	}
+
+	ath79_mbox_dma_exit();
+}
+
+static int ath79_pcm_preallocate_dma_buffer(struct snd_pcm *pcm, int stream)
+{
+	struct snd_pcm_substream *ss = pcm->streams[stream].substream;
+	struct snd_dma_buffer *buf = &ss->dma_buffer;
+
+	printk(KERN_NOTICE "%s: allocate %8s stream\n", __FUNCTION__,
+		stream == SNDRV_PCM_STREAM_CAPTURE ? "capture" : "playback" );
+
+	buf->dev.type = SNDRV_DMA_TYPE_DEV;
+	buf->dev.dev = pcm->card->dev;
+	buf->private_data = NULL;
+	buf->bytes = ar7240_i2s_alsa_pcm_hardware.buffer_bytes_max;
+
+	buf->area = dma_alloc_coherent(NULL, buf->bytes,
+					   &buf->addr, GFP_DMA);
+	if (!buf->area)
+		return -ENOMEM;
+
+	printk(KERN_NOTICE "%s: 0x%xB allocated at 0x%08x\n",
+		__FUNCTION__, buf->bytes, (u32) buf->area);
+
+	return 0;
+}
+
 static int ar7240_i2s_alsa_cleanup(void)
 {
 	if (snd_chip.card)
 	{
+        ath79_pcm_free_dma_buffers(snd_chip.pcm);
 		snd_card_free(snd_chip.card);
         snd_chip.card = NULL;
+        snd_chip.pcm = NULL;
+        snd_chip.playback = NULL;
+        snd_chip.capture = NULL;
 	}
 	return 0;
 }
+
 static int ar7240_i2s_alsa_init(void)
 {
 	int result = -1;
@@ -1685,6 +1859,8 @@ static int ar7240_i2s_alsa_init(void)
 		goto error;
 	}
     snd_chip.pcm = pcm;
+	result = ath79_pcm_preallocate_dma_buffer(pcm, SNDRV_PCM_STREAM_PLAYBACK);
+	ath79_mbox_dma_init(NULL);
 
 	snd_pcm_set_ops(pcm, SNDRV_PCM_STREAM_PLAYBACK, &snd_933x_pcm_playback);
 	pcm->info_flags = 0;
