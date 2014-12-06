@@ -2,10 +2,8 @@
 
 /* ioctl numbers for i2s driver */
 
-//#define NUM_DESC	    4
-#define NUM_DESC	    1
-//#define I2S_BUF_SIZE	192
-#define I2S_BUF_SIZE	2048
+#define NUM_DESC	    4
+#define I2S_BUF_SIZE	192
 
 #define I2S_VOLUME      _IOW('N', 0x20, int)
 #define I2S_FREQ        _IOW('N', 0x21, int)
