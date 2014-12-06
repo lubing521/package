@@ -59,6 +59,8 @@
 int ar7240_i2s_major = 253;
 int ar7240_i2s_minor = 0;
 struct class *i2sclass = NULL;
+dma_addr_t my_paddr;
+unsigned char *my_vaddr;
 
 module_param(ar7240_i2s_major, int, S_IRUGO);
 module_param(ar7240_i2s_minor, int, S_IRUGO);
@@ -320,13 +322,21 @@ int ar7240_i2s_init(struct file *filp)
 		else
 			sc->sc_pmall_buf = bufp;
 
+//		for (j = 0; j < NUM_DESC; j++) {
+//			scbuf[j].bf_vaddr = &bufp[j * I2S_BUF_SIZE];
+//			scbuf[j].bf_paddr =
+//			    dma_map_single(NULL, scbuf[j].bf_vaddr,
+//					   I2S_BUF_SIZE,
+//					   DMA_BIDIRECTIONAL);
+//
+//		}
+        my_vaddr = dma_alloc_coherent(NULL, NUM_DESC * I2S_BUF_SIZE,
+                                           &my_paddr, GFP_DMA);
+        if (!my_vaddr)
+                return -ENOMEM;
 		for (j = 0; j < NUM_DESC; j++) {
-			scbuf[j].bf_vaddr = &bufp[j * I2S_BUF_SIZE];
-			scbuf[j].bf_paddr =
-			    dma_map_single(NULL, scbuf[j].bf_vaddr,
-					   I2S_BUF_SIZE,
-					   DMA_BIDIRECTIONAL);
-
+			scbuf[j].bf_vaddr = &my_vaddr[j * I2S_BUF_SIZE];
+			scbuf[j].bf_paddr = my_paddr + j * I2S_BUF_SIZE;
 		}
 		dmabuf->tail = 0;
 
@@ -579,8 +589,8 @@ ssize_t ar7240_i2s_write(struct file * filp, const char __user * buf,
 //		}
 
 		/*对由dma_alloc_noncoherent()申请的内存做局部映射，其实虚拟地址为vaddr。在做该操作时，请注意缓存行的边界*/
-        dma_cache_sync(NULL, scbuf[tail].bf_vaddr, desc[tail].length, DMA_TO_DEVICE);
-		desc[tail].BufPtr = (unsigned int) scbuf[tail].bf_paddr;
+        //dma_cache_sync(NULL, scbuf[tail].bf_vaddr, desc[tail].length, DMA_TO_DEVICE);
+		//desc[tail].BufPtr = (unsigned int) scbuf[tail].bf_paddr;
 		desc[tail].OWN = 1;
 		tail = next_tail(tail);
 		offset += data_len;
@@ -696,10 +706,14 @@ int ar7240_i2s_close(struct inode *inode, struct file *filp)
         }
     }
 
-	for (j = 0; j < NUM_DESC; j++) {
-		dma_unmap_single(NULL, dmabuf->db_buf[j].bf_paddr,
-				 I2S_BUF_SIZE, DMA_BIDIRECTIONAL);
-	}
+//	for (j = 0; j < NUM_DESC; j++) {
+//		dma_unmap_single(NULL, dmabuf->db_buf[j].bf_paddr,
+//				 I2S_BUF_SIZE, DMA_BIDIRECTIONAL);
+//	}
+	dma_free_coherent(NULL,
+			  NUM_DESC * I2S_BUF_SIZE,
+			  my_vaddr, my_paddr);
+
 
 	if (mode & FMODE_READ)
 		kfree(sc->sc_rmall_buf);
