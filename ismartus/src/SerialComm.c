@@ -199,7 +199,8 @@ static void* pthreadWriteSerial (void* arg)
 					PrintDataBy16((unsigned char *)pnode->data, pnode->nlen);
 				}
 				write(g_hSerialDevFd, pnode->data, pnode->nlen);
-				tcflush(g_hSerialDevFd, TCOFLUSH);
+                //ar9331 /dev/ttyATH0不能使用该函数,否则数据发送不完整
+				//tcflush(g_hSerialDevFd, TCOFLUSH);
 				/*出队列,入队列,不能同时执行*/
 				pthread_mutex_lock(&g_hRdWrMutex);
 				DeQueue(g_WriteQueue);
