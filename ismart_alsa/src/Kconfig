@@ -1,0 +1,5 @@
+config AR9331_I2S
+	tristate "ar9331 i2s driver"
+	help
+	  ar9331 i2s driver
+
