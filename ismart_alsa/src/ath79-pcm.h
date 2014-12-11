@@ -56,6 +56,7 @@ struct ath79_pcm_rt_priv {
 	unsigned int elapsed_size;
 	unsigned int delay_time;
 	int direction;
+    int pause; //1代表已经停止
 };
 
 /* Replaces struct ath_i2s_softc */
@@ -104,6 +105,22 @@ static inline void ath79_pcm_clear_own_bits(struct ath79_pcm_rt_priv *rtpriv)
 		}
 	}
 	spin_unlock(&ath79_pcm_lock);
+}
+
+static inline unsigned int ath79_pcm_get_own_bits(struct ath79_pcm_rt_priv *rtpriv)
+{
+	struct ath79_pcm_desc *desc;
+	unsigned int size_played = 0;
+
+	spin_lock(&ath79_pcm_lock);
+	list_for_each_entry(desc, &rtpriv->dma_head, list) {
+		if (desc->OWN == 0) {
+//			desc->OWN = 1;
+			size_played += desc->size;
+		}
+	}
+	spin_unlock(&ath79_pcm_lock);
+	return size_played;
 }
 
 static inline struct ath79_pcm_desc *ath79_pcm_get_last_played(struct ath79_pcm_rt_priv *rtpriv)

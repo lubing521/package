@@ -63,6 +63,7 @@
 #define SPDIF_S_24_32                               0xb
 
 #define PAUSE				0x1
+#define STOP				0x1
 #define START				0x2
 #define RESUME				0x4
 

@@ -82,11 +82,12 @@ MODULE_PARM_DESC(p_ssize, "Playback Sample Size(bytes)");
 #define DESC_FREE_WAIT_BUFFER 200      /* In usec */
 
 
-int ar7240_i2s_major = 253;
-int ar7240_i2s_minor = 0;
+static int ar7240_i2s_major = 253;
+static int ar7240_i2s_minor = 0;
 spinlock_t ath79_pcm_lock;
 static struct dma_pool *ath79_pcm_cache;
 spinlock_t ath79_stereo_lock;
+static int first = 0;
 
 module_param(ar7240_i2s_major, int, S_IRUGO);
 module_param(ar7240_i2s_minor, int, S_IRUGO);
@@ -235,7 +236,6 @@ void ath79_mbox_dma_prepare(struct ath79_pcm_rt_priv *rtpriv)
 
 	ar7240_reg_wr(MBOX_FIFO_RESET, 0x05); // virian
 	udelay(1000);
-    printk("ath79_mbox_dma_prepare %d\n", rtpriv->direction);
 
 	if (rtpriv->direction == SNDRV_PCM_STREAM_PLAYBACK) {
 		/* Request the DMA channel to the controller */
@@ -371,6 +371,39 @@ void ath79_mbox_dma_exit(void)
 	ath79_pcm_cache = NULL;
 }
 
+void ath79_mbox_dma_start(struct ath79_pcm_rt_priv *rtpriv)
+{
+	if (rtpriv->direction == SNDRV_PCM_STREAM_PLAYBACK) {
+		ar7240_reg_wr(MBOX0_DMA_RX_CONTROL, START);
+	} else {
+		ar7240_reg_wr(MBOX0_DMA_TX_CONTROL, START);
+	}
+}
+
+void ath79_mbox_dma_stop(struct ath79_pcm_rt_priv *rtpriv)
+{
+	if (rtpriv->direction == SNDRV_PCM_STREAM_PLAYBACK) {
+		ar7240_reg_wr(MBOX0_DMA_RX_CONTROL, STOP);
+	} else {
+		ar7240_reg_wr(MBOX0_DMA_TX_CONTROL, STOP);
+	}
+
+	/* Delay for the dynamically calculated max time based on
+	sample size, channel, sample rate + margin to ensure that the
+	DMA engine will be truly idle. */
+
+	mdelay(rtpriv->delay_time);
+	mdelay(200);
+}
+
+void ath79_mbox_dma_resume(struct ath79_pcm_rt_priv *rtpriv)
+{
+	if (rtpriv->direction == SNDRV_PCM_STREAM_PLAYBACK) {
+		ar7240_reg_wr(MBOX0_DMA_RX_CONTROL, RESUME);
+	} else {
+		ar7240_reg_wr(MBOX0_DMA_TX_CONTROL, RESUME);
+	}
+}
 
 //irqreturn_t ar7240_i2s_intr(int irq, void *dev_id, struct pt_regs *regs)
 irqreturn_t ar7240_alsa_intr(int irq, void *dev_id)
@@ -378,6 +411,8 @@ irqreturn_t ar7240_alsa_intr(int irq, void *dev_id)
 	uint32_t status;
 	struct ath79_pcm_rt_priv *rtpriv;
 	unsigned int period_bytes;
+    static int flag = 0;
+    int tmp = 0;
 
 	status = ar7240_reg_rd(MBOX_INT_STATUS);
 
@@ -385,9 +420,44 @@ irqreturn_t ar7240_alsa_intr(int irq, void *dev_id)
 //        stats.rx_underflow++;
 
 
-	if(status & MBOX0_RX_DMA_COMPLETE) {
+    //增加NULL != snd_chip.playback的判断,防止非alsa中断产生的干扰
+    //例如:ar7240_i2s.ko中断未处理,然后rmmod,接着insmod本模块,结果刚注册中断,就执行了本函数,如果不判断,kernel panic随之产生
+	if(status & MBOX0_RX_DMA_COMPLETE && NULL != snd_chip.playback) {
 		unsigned int played_size;
 		rtpriv = snd_chip.playback->runtime->private_data;
+        if (1 == rtpriv->pause)
+        {
+            if (0 == flag)
+            {
+                flag = ath79_pcm_get_own_bits(rtpriv);
+                if(0 < flag)
+                {
+                    rtpriv->played_pos += flag;
+                    if (rtpriv->played_pos >= snd_pcm_lib_buffer_bytes(snd_chip.playback))
+                    {
+                        rtpriv->played_pos -= snd_pcm_lib_buffer_bytes(snd_chip.playback);
+                    }
+                    snd_pcm_period_elapsed(snd_chip.playback);
+                }
+            }
+            else
+            {
+                tmp = ath79_pcm_get_own_bits(rtpriv);
+                if(flag < tmp)
+                {
+                    rtpriv->played_pos += tmp - flag;
+                    if (rtpriv->played_pos >= snd_pcm_lib_buffer_bytes(snd_chip.playback))
+                    {
+                        rtpriv->played_pos -= snd_pcm_lib_buffer_bytes(snd_chip.playback);
+                    }
+                    snd_pcm_period_elapsed(snd_chip.playback);
+                }
+                flag = tmp;
+            }
+            printk("irq flag:%d played_pos:%d\n", flag, rtpriv->played_pos);
+            goto ack;
+        }
+        flag = 0;
 		/* Store the last played buffer in the runtime priv struct */
 //		rtpriv->last_played = ath79_pcm_get_last_played(rtpriv);
 		period_bytes = snd_pcm_lib_period_bytes(snd_chip.playback);
@@ -407,8 +477,6 @@ irqreturn_t ar7240_alsa_intr(int irq, void *dev_id)
 		rtpriv->elapsed_size += played_size;
 
 //		ath79_mbox_interrupt_ack(AR934X_DMA_MBOX_INT_STATUS_RX_DMA_COMPLETE);
-        /* Ack the interrupts */
-        ar7240_reg_wr(MBOX_INT_STATUS, status);
 
         printk("elapsed:%u, played:%u, pos:%u\n",
             rtpriv->elapsed_size, 
@@ -432,8 +500,6 @@ irqreturn_t ar7240_alsa_intr(int irq, void *dev_id)
 //		rtpriv->last_played = ath79_pcm_get_last_played(rtpriv);
 //		ath79_pcm_set_own_bits(rtpriv);
 //		ath79_mbox_interrupt_ack(AR934X_DMA_MBOX_INT_STATUS_TX_DMA_COMPLETE);
-//        /* Ack the interrupts */
-//        ar7240_reg_wr(MBOX_INT_STATUS, status);
 //
 //		if (rtpriv->last_played == NULL) {
 //			snd_printd("BUG: ISR called but no rec buf found\n");
@@ -441,9 +507,11 @@ irqreturn_t ar7240_alsa_intr(int irq, void *dev_id)
 //		}
 //		snd_pcm_period_elapsed(snd_chip.capture);
 //	}
-
+ 
 ack:
 	//printk("intrupt:%x\n", status);
+    /* Ack the interrupts */
+    ar7240_reg_wr(MBOX_INT_STATUS, status);
 	return IRQ_HANDLED;
 }
 
@@ -634,11 +702,11 @@ struct snd_pcm_hardware ar7240_alsa_pcm_hardware =
 //	.period_bytes_max = 4095,
 //	.periods_min = 16,
 //	.periods_max = 256,
-	.buffer_bytes_max = 16*4095*16,
+	.buffer_bytes_max = 4*4095,
 	.period_bytes_min = 64,
 	.period_bytes_max = 4095,
-	.periods_min = 16,
-	.periods_max = 256,
+	.periods_min = 2,
+	.periods_max = 4,
 	.fifo_size = 0,
 };
 
@@ -671,6 +739,7 @@ static int ar7240_alsa_pcm_open(struct snd_pcm_substream *substream)
 	substream->runtime->private_data = rtpriv;
 //	rtpriv->last_played = NULL;
     rtpriv->played_pos = 0;
+    rtpriv->pause = 0;
 	INIT_LIST_HEAD(&rtpriv->dma_head);
 	if(substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
 		rtpriv->direction = SNDRV_PCM_STREAM_PLAYBACK;
@@ -692,10 +761,81 @@ static int ar7240_alsa_pcm_close(struct snd_pcm_substream *substream)
 
 	rtpriv = substream->runtime->private_data;
 	kfree(rtpriv);
+    substream->runtime->private_data = NULL;
 
 	printk(KERN_CRIT "pcm close:%d\n", 0);
 	return 0;
 }
+
+static int set_hwparams(struct snd_pcm_substream *substream,
+				struct snd_pcm_hw_params *p)
+{
+#define AR7240_STEREO_CONFIG_DEFAULT (AR7240_STEREO_CONFIG_SPDIF_ENABLE | \
+                AR7240_STEREO_CONFIG_ENABLE | \
+                AR7240_STEREO_CONFIG_SAMPLE_CNT_CLEAR_TYPE | \
+                AR7240_STEREO_CONFIG_MASTER | \
+                AR7240_STEREO_CONFIG_PSEDGE(2))
+    int channel = params_channels(p);
+    int rate = params_rate(p);
+    int dsize = snd_pcm_format_width(params_format(p));
+    int bigendian = snd_pcm_format_big_endian(params_format(p)); //1 big-endian , 0 little-endian , wav : little
+    uint32_t st_cfg;
+
+    switch (rate) {
+    case 44100:
+        ar7240_reg_wr(AR7240_STEREO_CLK_DIV, (0x11 << 16) + 0xb725);
+        break;
+    case 48000:
+        ar7240_reg_wr(AR7240_STEREO_CLK_DIV, (0x10 << 16) + 0x4fff);
+        break;
+    default:
+        return -ENOTSUPP;
+    }
+
+    if (2 == channel) {
+        ar7240_reg_rmw_clear(AR7240_STEREO_CONFIG, MONO);
+    }
+    else {
+        ar7240_reg_rmw_set(AR7240_STEREO_CONFIG, MONO);
+    }
+
+    switch (dsize) {
+    case 8:
+        st_cfg = (AR7240_STEREO_CONFIG_DEFAULT |
+             AR7240_STEREO_CONFIG_DATA_WORD_SIZE(AR7240_STEREO_WS_8B));
+        break;
+    case 16:
+        st_cfg = (AR7240_STEREO_CONFIG_DEFAULT |
+            //AR7240_STEREO_CONFIG_PCM_SWAP |
+             AR7240_STEREO_CONFIG_DATA_WORD_SIZE(AR7240_STEREO_WS_16B));
+        break;
+    case 24:
+        st_cfg = (AR7240_STEREO_CONFIG_DEFAULT |
+            //AR7240_STEREO_CONFIG_PCM_SWAP |
+            AR7240_STEREO_CONFIG_DATA_WORD_SIZE(AR7240_STEREO_WS_24B) |
+             AR7240_STEREO_CONFIG_I2S_32B_WORD);
+        break;
+    case 32:
+        st_cfg = (AR7240_STEREO_CONFIG_DEFAULT |
+            //AR7240_STEREO_CONFIG_PCM_SWAP |
+            AR7240_STEREO_CONFIG_DATA_WORD_SIZE(AR7240_STEREO_WS_32B) |
+             AR7240_STEREO_CONFIG_I2S_32B_WORD);
+        break;
+    default:
+        printk(KERN_CRIT "Data size %d not supported \n", dsize);
+        return -ENOTSUPP;
+    }
+    if (0 == bigendian)
+    {
+        st_cfg |= st_cfg | AR7240_STEREO_CONFIG_PCM_SWAP;
+    }
+    ar7240_reg_wr(AR7240_STEREO_CONFIG, (st_cfg | AR7240_STEREO_CONFIG_RESET));
+    udelay(100);
+    ar7240_reg_wr(AR7240_STEREO_CONFIG, st_cfg);
+
+    return 1;
+}
+
 
 static void print_hwparams(struct snd_pcm_substream *substream,
 				struct snd_pcm_hw_params *p)
@@ -716,6 +856,8 @@ static void print_hwparams(struct snd_pcm_substream *substream,
 	printk(" %d B/s\n", params_rate(p) *
 		params_channels(p) *
 		snd_pcm_format_width(params_format(p)) / 8);
+    printk(" bigendian %d (1 big-endian, 0 little-endian, wav: little)\n",
+                snd_pcm_format_big_endian(params_format(p)));
 
 }
 static int 
@@ -728,10 +870,13 @@ ar7240_alsa_pcm_hw_params(struct snd_pcm_substream *substream, struct snd_pcm_hw
 
 	// Does this routine need to handle new clock changes in the hw_params?
 	rtpriv = runtime->private_data;
+    if (!rtpriv)
+    {
+        return -ENOMEM;
+    }
 
 	ret = ath79_mbox_dma_map(rtpriv, substream->dma_buffer.addr,
 		params_period_bytes(hw_params), params_buffer_bytes(hw_params));
-
 	if(ret < 0)
 		return ret;
 
@@ -757,8 +902,12 @@ ar7240_alsa_pcm_hw_params(struct snd_pcm_substream *substream, struct snd_pcm_hw
 //    ret = snd_pcm_lib_malloc_pages(substream,
 //					params_buffer_bytes(params));
 
+    ret = set_hwparams(substream, hw_params);
+	ath79_mbox_dma_prepare(rtpriv);
+    rtpriv->played_pos = 0;
     print_hwparams(substream, hw_params);
-	return 1;
+    printk("hw_params:%d\n", ret);
+	return ret;
 }
 
 static int ar7240_alsa_pcm_hw_free(struct snd_pcm_substream *substream)
@@ -767,17 +916,17 @@ static int ar7240_alsa_pcm_hw_free(struct snd_pcm_substream *substream)
 //	ret = snd_pcm_lib_free_pages(substream);
 	struct snd_pcm_runtime *runtime = substream->runtime;
 	struct ath79_pcm_rt_priv *rtpriv;
-
-	rtpriv = runtime->private_data;
-	ath79_pcm_clear_own_bits(rtpriv); //设置为0,表示没有数据可以播放
-    udelay(10000);
-	ar7240_reg_wr(MBOX_FIFO_RESET, 0x05); // virian
-	udelay(1000);
+    rtpriv = runtime->private_data;
+//    ath79_pcm_clear_own_bits(rtpriv); //设置为0,表示没有数据可以播放
+//    udelay(10000);
+//    ar7240_reg_wr(MBOX_FIFO_RESET, 0x05); // virian
+//    udelay(1000);
 	ath79_mbox_dma_unmap(rtpriv);
 	snd_pcm_set_runtime_buffer(substream, NULL);
 	printk(KERN_CRIT "pcm hw_free:%d\n", ret);
     return ret;
 }
+
 static int ar7240_alsa_pcm_prepare(struct snd_pcm_substream *substream)
 {
     int ret = 0;
@@ -785,42 +934,54 @@ static int ar7240_alsa_pcm_prepare(struct snd_pcm_substream *substream)
 	struct ath79_pcm_rt_priv *rtpriv;
 
 	rtpriv = runtime->private_data;
+//把ar7240_alsa_pcm_prepare功能弱化,不再在这里操作,因为暂停播放不需要dma_reset
 //	cpu_dai = rtd->cpu_dai;
 //	/* When setup the first stream should reset the DMA MBOX controller */
 //	if(cpu_dai->active == 1)
 //		ath79_mbox_dma_reset();
-
-	ath79_mbox_dma_prepare(rtpriv);
-
-	ath79_pcm_set_own_bits(rtpriv); //设置为1,表示有数据可以播放
+//
+//    ath79_mbox_dma_prepare(rtpriv);
+//
+//    ath79_pcm_set_own_bits(rtpriv); //设置为1,表示有数据可以播放
 //	rtpriv->last_played = NULL;
-    rtpriv->played_pos = 0;
+//    rtpriv->played_pos = 0;
 	printk(KERN_CRIT "pcm prepare:%d\n", ret);
 	return ret;
 }
 static int ar7240_alsa_pcm_trigger(struct snd_pcm_substream *substream, int cmd)
 {
-    int data = 0;
 	struct ath79_pcm_rt_priv *rtpriv = substream->runtime->private_data;
+
 	switch (cmd) {
 	case SNDRV_PCM_TRIGGER_START:
-        ar7240_i2sound_dma_start(data);
+        rtpriv->pause = 0;
+	ath79_pcm_set_own_bits(rtpriv); //设置为1,表示有数据可以播放
+        if (0 == first) {
+		    //ath79_mbox_dma_resume(rtpriv);
+		    ath79_mbox_dma_start(rtpriv);
+            printk("ath79_mbox_dma_start\n");
+            first = 1;
+        }
+        else {
+		    ath79_mbox_dma_start(rtpriv);
+		    //ath79_mbox_dma_resume(rtpriv);
+            printk("ath79_mbox_dma_resume\n");
+        }
 		break;
 	case SNDRV_PCM_TRIGGER_STOP:
-        ar7240_i2sound_dma_pause(data);
-
-        /* Delay for the dynamically calculated max time based on
-        sample size, channel, sample rate + margin to ensure that the
-        DMA engine will be truly idle. */
-        mdelay(rtpriv->delay_time);
-
-		break;
-	case SNDRV_PCM_TRIGGER_RESUME:
-        ar7240_i2sound_dma_resume(data);
+        rtpriv->pause = 1;
+	    udelay(10000);
+		//ath79_mbox_dma_stop(rtpriv);
+	    //udelay(1000);
+        //ath79_pcm_clear_own_bits(rtpriv); //设置为0,表示没有数据可以播放
+        //udelay(1000);
+        //ar7240_reg_wr(MBOX_FIFO_RESET, 0x05); //SNDRV_PCM_TRIGGER_STOP时候调用会有杂音,并且导致下一次播放都是杂音
+        //udelay(50);
 		break;
 	default:
 		return -EINVAL;
 	}
+
 	printk(KERN_CRIT "pcm trigger :%d\n", cmd);
 	return 0;
 }
@@ -841,7 +1002,7 @@ static snd_pcm_uframes_t ar7240_alsa_pcm_pointer(struct snd_pcm_substream *subst
 
     ret = rtpriv->played_pos;
 	ret = bytes_to_frames(runtime, ret);
-	printk(KERN_CRIT "pcm pointer:%lu\n", ret);
+//	printk(KERN_CRIT "pcm pointer:%lu\n", ret);
 	return ret;
 }
 
@@ -926,8 +1087,8 @@ static int ar7240_alsa_cleanup(void)
 {
 	if (snd_chip.card)
 	{
-        ath79_pcm_free_dma_buffers(snd_chip.pcm);
-		snd_card_free(snd_chip.card);
+        ath79_pcm_free_dma_buffers(snd_chip.pcm); //substream DMA释放
+		snd_card_free(snd_chip.card); //声卡注销
         snd_chip.card = NULL;
         snd_chip.pcm = NULL;
         snd_chip.playback = NULL;
