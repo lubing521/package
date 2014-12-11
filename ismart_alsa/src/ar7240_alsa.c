@@ -136,6 +136,18 @@ static u16 wm8918_swap(u16 data)
 	tmp = tmp | ((data >> 8) & 0x00ff);
 	return tmp;
 }
+
+static void wm8918_start(struct i2c_client *client)
+{
+    i2c_smbus_write_word_data(client, 0x21, wm8918_swap(0x0000)); //非静音
+    i2c_smbus_write_word_data(client, 0x19, wm8918_swap(0x0002));
+}
+
+static void wm8918_stop(struct i2c_client *client)
+{
+    i2c_smbus_write_word_data(client, 0x21, wm8918_swap(0x0008));
+}
+
 static int wm8918_probe(struct i2c_client *client, const struct i2c_device_id *id)
 {
 //	int ret;
@@ -153,7 +165,7 @@ static int wm8918_probe(struct i2c_client *client, const struct i2c_device_id *i
     i2c_smbus_write_word_data(client, 0x14, wm8918_swap(0x845E));
     i2c_smbus_write_word_data(client, 0x39, wm8918_swap(0x0039));
     i2c_smbus_write_word_data(client, 0x3A, wm8918_swap(0x00B9));
-    i2c_smbus_write_word_data(client, 0x21, wm8918_swap(0x0000));
+    i2c_smbus_write_word_data(client, 0x21, wm8918_swap(0x0008)); //静音
     i2c_smbus_write_word_data(client, 0x68, wm8918_swap(0x0005));
     i2c_smbus_write_word_data(client, 0x19, wm8918_swap(0x0002));
 //    i2c_smbus_write_word_data(client, 0x1E, wm8918_swap(0x01C0));
@@ -229,13 +241,16 @@ static struct i2c_driver wm8918_driver = {
     .address_list = normal_i2c,
 };
 
+void ath79_mbox_dma_reset()
+{
+	ar7240_reg_wr(MBOX_FIFO_RESET, 0x05); // virian
+	udelay(1000);
+}
+
 void ath79_mbox_dma_prepare(struct ath79_pcm_rt_priv *rtpriv)
 {
 	struct ath79_pcm_desc *desc;
 //	u32 t;
-
-	ar7240_reg_wr(MBOX_FIFO_RESET, 0x05); // virian
-	udelay(1000);
 
 	if (rtpriv->direction == SNDRV_PCM_STREAM_PLAYBACK) {
 		/* Request the DMA channel to the controller */
@@ -478,10 +493,10 @@ irqreturn_t ar7240_alsa_intr(int irq, void *dev_id)
 
 //		ath79_mbox_interrupt_ack(AR934X_DMA_MBOX_INT_STATUS_RX_DMA_COMPLETE);
 
-        printk("elapsed:%u, played:%u, pos:%u\n",
-            rtpriv->elapsed_size, 
-            played_size, 
-            rtpriv->played_pos);
+//        printk("elapsed:%u, played:%u, pos:%u\n",
+//            rtpriv->elapsed_size, 
+//            played_size, 
+//            rtpriv->played_pos);
 		if(rtpriv->elapsed_size >= period_bytes)
 		{
 			rtpriv->elapsed_size %= period_bytes;
@@ -703,8 +718,8 @@ struct snd_pcm_hardware ar7240_alsa_pcm_hardware =
 //	.periods_min = 16,
 //	.periods_max = 256,
 	.buffer_bytes_max = 4*4095,
-	.period_bytes_min = 64,
-	.period_bytes_max = 4095,
+	.period_bytes_min = 192,
+	.period_bytes_max = 3072,
 	.periods_min = 2,
 	.periods_max = 4,
 	.fifo_size = 0,
@@ -903,6 +918,7 @@ ar7240_alsa_pcm_hw_params(struct snd_pcm_substream *substream, struct snd_pcm_hw
 //					params_buffer_bytes(params));
 
     ret = set_hwparams(substream, hw_params);
+	ath79_mbox_dma_reset();
 	ath79_mbox_dma_prepare(rtpriv);
     rtpriv->played_pos = 0;
     print_hwparams(substream, hw_params);
@@ -940,7 +956,7 @@ static int ar7240_alsa_pcm_prepare(struct snd_pcm_substream *substream)
 //	if(cpu_dai->active == 1)
 //		ath79_mbox_dma_reset();
 //
-//    ath79_mbox_dma_prepare(rtpriv);
+    ath79_mbox_dma_prepare(rtpriv);
 //
 //    ath79_pcm_set_own_bits(rtpriv); //设置为1,表示有数据可以播放
 //	rtpriv->last_played = NULL;
@@ -954,8 +970,9 @@ static int ar7240_alsa_pcm_trigger(struct snd_pcm_substream *substream, int cmd)
 
 	switch (cmd) {
 	case SNDRV_PCM_TRIGGER_START:
+        wm8918_start(wm8918_i2c_client);
         rtpriv->pause = 0;
-	ath79_pcm_set_own_bits(rtpriv); //设置为1,表示有数据可以播放
+	    ath79_pcm_set_own_bits(rtpriv); //设置为1,表示有数据可以播放
         if (0 == first) {
 		    //ath79_mbox_dma_resume(rtpriv);
 		    ath79_mbox_dma_start(rtpriv);
@@ -969,9 +986,12 @@ static int ar7240_alsa_pcm_trigger(struct snd_pcm_substream *substream, int cmd)
         }
 		break;
 	case SNDRV_PCM_TRIGGER_STOP:
+        wm8918_stop(wm8918_i2c_client);
         rtpriv->pause = 1;
-	    udelay(10000);
+	    udelay(100000);
 		//ath79_mbox_dma_stop(rtpriv);
+	    //udelay(10000);
+        //rtpriv->played_pos = 0;
 	    //udelay(1000);
         //ath79_pcm_clear_own_bits(rtpriv); //设置为0,表示没有数据可以播放
         //udelay(1000);
