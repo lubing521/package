@@ -469,7 +469,8 @@ irqreturn_t ar7240_alsa_intr(int irq, void *dev_id)
                 }
                 flag = tmp;
             }
-            printk("irq flag:%d played_pos:%d\n", flag, rtpriv->played_pos);
+//            printk("irq flag:%d played_pos:%d\n", flag, rtpriv->played_pos);
+            rtpriv->played_pos = 0 - snd_pcm_lib_period_bytes(snd_chip.playback);
             goto ack;
         }
         flag = 0;
@@ -604,7 +605,7 @@ void ar7240_i2sound_i2slink_on(int master)
      //
      ar7240_reg_wr(AR7240_STEREO_CONFIG,
        (AR7240_STEREO_CONFIG_RESET |
-        AR7240_STEREO_CONFIG_SPDIF_ENABLE |
+//        AR7240_STEREO_CONFIG_SPDIF_ENABLE |
         AR7240_STEREO_CONFIG_PCM_SWAP |
         AR7240_STEREO_CONFIG_ENABLE |
 //		AR7240_STEREO_CONFIG_DELAY |
@@ -719,8 +720,8 @@ struct snd_pcm_hardware ar7240_alsa_pcm_hardware =
 //	.periods_max = 256,
 	.buffer_bytes_max = 4*4095,
 	.period_bytes_min = 192,
-	.period_bytes_max = 3072,
-	.periods_min = 2,
+	.period_bytes_max = 4095,
+	.periods_min = 4,
 	.periods_max = 4,
 	.fifo_size = 0,
 };
@@ -785,7 +786,7 @@ static int ar7240_alsa_pcm_close(struct snd_pcm_substream *substream)
 static int set_hwparams(struct snd_pcm_substream *substream,
 				struct snd_pcm_hw_params *p)
 {
-#define AR7240_STEREO_CONFIG_DEFAULT (AR7240_STEREO_CONFIG_SPDIF_ENABLE | \
+#define AR7240_STEREO_CONFIG_DEFAULT ( \
                 AR7240_STEREO_CONFIG_ENABLE | \
                 AR7240_STEREO_CONFIG_SAMPLE_CNT_CLEAR_TYPE | \
                 AR7240_STEREO_CONFIG_MASTER | \
@@ -920,7 +921,8 @@ ar7240_alsa_pcm_hw_params(struct snd_pcm_substream *substream, struct snd_pcm_hw
     ret = set_hwparams(substream, hw_params);
 	ath79_mbox_dma_reset();
 	ath79_mbox_dma_prepare(rtpriv);
-    rtpriv->played_pos = 0;
+    rtpriv->played_pos = 0 - params_period_bytes(hw_params);
+    printk("params_period_bytes(hw_params):%d\n", params_period_bytes(hw_params));
     print_hwparams(substream, hw_params);
     printk("hw_params:%d\n", ret);
 	return ret;
@@ -956,12 +958,13 @@ static int ar7240_alsa_pcm_prepare(struct snd_pcm_substream *substream)
 //	if(cpu_dai->active == 1)
 //		ath79_mbox_dma_reset();
 //
+	ath79_mbox_dma_reset();
     ath79_mbox_dma_prepare(rtpriv);
 //
 //    ath79_pcm_set_own_bits(rtpriv); //设置为1,表示有数据可以播放
 //	rtpriv->last_played = NULL;
 //    rtpriv->played_pos = 0;
-	printk(KERN_CRIT "pcm prepare:%d\n", ret);
+	//printk(KERN_CRIT "pcm prepare:%d\n", ret);
 	return ret;
 }
 static int ar7240_alsa_pcm_trigger(struct snd_pcm_substream *substream, int cmd)
@@ -970,29 +973,34 @@ static int ar7240_alsa_pcm_trigger(struct snd_pcm_substream *substream, int cmd)
 
 	switch (cmd) {
 	case SNDRV_PCM_TRIGGER_START:
+        if (NULL != wm8918_i2c_client) {
         wm8918_start(wm8918_i2c_client);
+        }
         rtpriv->pause = 0;
 	    ath79_pcm_set_own_bits(rtpriv); //设置为1,表示有数据可以播放
         if (0 == first) {
-		    //ath79_mbox_dma_resume(rtpriv);
 		    ath79_mbox_dma_start(rtpriv);
-            printk("ath79_mbox_dma_start\n");
+		    //ath79_mbox_dma_resume(rtpriv);
+            //printk("ath79_mbox_dma_start\n");
             first = 1;
         }
         else {
 		    ath79_mbox_dma_start(rtpriv);
 		    //ath79_mbox_dma_resume(rtpriv);
-            printk("ath79_mbox_dma_resume\n");
+            //printk("ath79_mbox_dma_resume\n");
         }
 		break;
 	case SNDRV_PCM_TRIGGER_STOP:
+        if (NULL != wm8918_i2c_client) {
         wm8918_stop(wm8918_i2c_client);
+        }
         rtpriv->pause = 1;
-	    udelay(100000);
+	    //udelay(100000);
 		//ath79_mbox_dma_stop(rtpriv);
-	    //udelay(10000);
-        //rtpriv->played_pos = 0;
-	    //udelay(1000);
+	    mdelay(100);
+        rtpriv->played_pos = 0 - snd_pcm_lib_period_bytes(snd_chip.playback);
+        //printk("snd_pcm_lib_period_bytes(snd_chip.playback):%d\n", snd_pcm_lib_period_bytes(snd_chip.playback));
+	    udelay(1000);
         //ath79_pcm_clear_own_bits(rtpriv); //设置为0,表示没有数据可以播放
         //udelay(1000);
         //ar7240_reg_wr(MBOX_FIFO_RESET, 0x05); //SNDRV_PCM_TRIGGER_STOP时候调用会有杂音,并且导致下一次播放都是杂音
@@ -1002,7 +1010,7 @@ static int ar7240_alsa_pcm_trigger(struct snd_pcm_substream *substream, int cmd)
 		return -EINVAL;
 	}
 
-	printk(KERN_CRIT "pcm trigger :%d\n", cmd);
+	//printk(KERN_CRIT "pcm trigger :%d\n", cmd);
 	return 0;
 }
 
@@ -1020,7 +1028,14 @@ static snd_pcm_uframes_t ar7240_alsa_pcm_pointer(struct snd_pcm_substream *subst
 //	else
 //		ret = rtpriv->last_played->BufPtr - runtime->dma_addr;
 
-    ret = rtpriv->played_pos;
+    if (0 > rtpriv->played_pos)
+    {
+        ret = 0;
+    }
+    else
+    {
+        ret = rtpriv->played_pos;
+    }
 	ret = bytes_to_frames(runtime, ret);
 //	printk(KERN_CRIT "pcm pointer:%lu\n", ret);
 	return ret;
@@ -1036,7 +1051,7 @@ static int ar7240_alsa_pcm_mmap(struct snd_pcm_substream *ss, struct vm_area_str
 
 static int ar7240_alsa_pcm_ack(struct snd_pcm_substream *ss)
 {
-	printk(KERN_CRIT "pcm ack\n");
+	//printk(KERN_CRIT "pcm ack\n");
     return 0;
 }
 

@@ -52,7 +52,7 @@ struct ath79_pcm_desc {
 struct ath79_pcm_rt_priv {
 	struct list_head dma_head;
 //	struct ath79_pcm_desc *last_played;
-    unsigned int played_pos; //代替last_played,记录播放位置
+    int played_pos; //代替last_played,记录播放位置
 	unsigned int elapsed_size;
 	unsigned int delay_time;
 	int direction;
