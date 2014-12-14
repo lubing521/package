@@ -16,22 +16,124 @@
 #include <net/if.h>
 #include <errno.h>
 #include "List.h"
+#include "radiotap_iter.h"
 
 #define dp(...) do { if (dbg) { fprintf(stderr, __VA_ARGS__); } } while(0)
 #define ep(...) do { fprintf(stderr, __VA_ARGS__); } while(0)
 
-int dbg = 0; //´òÓ¡±êÖ¾
-int ctl_socket_server = 0;
-char dev[32] = {0};
-int bg_chans  [] = 
+static int dbg = 0; //æ‰“å°æ ‡å¿—
+static int ctl_socket_server = 0;
+static char dev[32] = {0};
+static int bg_chans  [] = 
 {
 	1, 7, 2, 8, 3, 9, 4, 10, 5, 11, 6
 };
 
-//Êý¾ÝÀ´Ô´: http://standards.ieee.org/develop/regauth/oui/oui.txt 
-unsigned int *router_list = NULL;
-unsigned int router_list_size = 0;
+//æ•°æ®æ¥æº: http://standards.ieee.org/develop/regauth/oui/oui.txt 
+static unsigned int *router_list = NULL;
+static unsigned int router_list_size = 0;
 
+//static int fcshdr = 0;
+
+static const struct radiotap_align_size align_size_000000_00[] = {
+	[0] = { .align = 1, .size = 4, },
+	[52] = { .align = 1, .size = 4, },
+};
+
+static const struct ieee80211_radiotap_namespace vns_array[] = {
+	{
+		.oui = 0x000000,
+		.subns = 0,
+		.n_bits = sizeof(align_size_000000_00),
+		.align_size = align_size_000000_00,
+	},
+};
+
+static const struct ieee80211_radiotap_vendor_namespaces vns = {
+	.ns = vns_array,
+	.n_ns = sizeof(vns_array)/sizeof(vns_array[0]),
+};
+
+#if 0
+static void print_radiotap_namespace(struct ieee80211_radiotap_iterator *iter)
+{
+	switch (iter->this_arg_index) {
+	case IEEE80211_RADIOTAP_TSFT:
+		printf("\tTSFT: %llu\n", le64toh(*(unsigned long long *)iter->this_arg));
+		break;
+	case IEEE80211_RADIOTAP_FLAGS:
+		printf("\tflags: %02x\n", *iter->this_arg);
+		break;
+	case IEEE80211_RADIOTAP_RATE:
+		printf("\trate: %lf\n", (double)*iter->this_arg/2);
+		break;
+	case IEEE80211_RADIOTAP_CHANNEL:
+	case IEEE80211_RADIOTAP_FHSS:
+	case IEEE80211_RADIOTAP_DBM_ANTSIGNAL:
+	case IEEE80211_RADIOTAP_DBM_ANTNOISE:
+	case IEEE80211_RADIOTAP_LOCK_QUALITY:
+	case IEEE80211_RADIOTAP_TX_ATTENUATION:
+	case IEEE80211_RADIOTAP_DB_TX_ATTENUATION:
+	case IEEE80211_RADIOTAP_DBM_TX_POWER:
+	case IEEE80211_RADIOTAP_ANTENNA:
+	case IEEE80211_RADIOTAP_DB_ANTSIGNAL:
+	case IEEE80211_RADIOTAP_DB_ANTNOISE:
+	case IEEE80211_RADIOTAP_TX_FLAGS:
+		break;
+	case IEEE80211_RADIOTAP_RX_FLAGS:
+		if (fcshdr) {
+			printf("\tFCS in header: %.8x\n",
+				le32toh(*(uint32_t *)iter->this_arg));
+			break;
+		}
+		printf("\tRX flags: %#.4x\n",
+			le16toh(*(uint16_t *)iter->this_arg));
+		break;
+	case IEEE80211_RADIOTAP_RTS_RETRIES:
+	case IEEE80211_RADIOTAP_DATA_RETRIES:
+		break;
+		break;
+	default:
+		printf("\tBOGUS DATA\n");
+		break;
+	}
+}
+#endif
+
+static void get_signal(struct ieee80211_radiotap_iterator *iter, int8_t *dbm_antsignal)
+{
+	switch (iter->this_arg_index) {
+	case IEEE80211_RADIOTAP_DBM_ANTSIGNAL:
+        *dbm_antsignal = *(int8_t *)iter->this_arg;
+        dp("dbm_antsignal:%d\n", *dbm_antsignal);
+        break;
+    default:
+        break;
+    }
+}
+
+#if 0
+static void print_test_namespace(struct ieee80211_radiotap_iterator *iter)
+{
+	switch (iter->this_arg_index) {
+	case 0:
+	case 52:
+		printf("\t00:00:00-00|%d: %.2x/%.2x/%.2x/%.2x\n",
+			iter->this_arg_index,
+			*iter->this_arg, *(iter->this_arg + 1),
+			*(iter->this_arg + 2), *(iter->this_arg + 3));
+		break;
+	default:
+		printf("\tBOGUS DATA - vendor ns %d\n", iter->this_arg_index);
+		break;
+	}
+}
+#endif
+
+static const struct radiotap_override overrides[] = {
+	{ .field = 14, .align = 4, .size = 4, }
+};
+ 
 typedef struct OnlineStatus
 {
 	int nOnline;
@@ -53,7 +155,7 @@ void *thread_channel(void *arg)
 	{
 		sprintf(cmd, "iw phy0 set channel %d", bg_chans[i]);
 //		gettimeofday(&tvs2, NULL);
-		//system()Ö´ÐÐÊµ¼ÊÐèÒª24ms
+		//system()æ‰§è¡Œå®žé™…éœ€è¦24ms
 		system(cmd);
 //		gettimeofday(&tve2, NULL);
 //		dp("%s: time %ld\n", cmd, (tve2.tv_sec - tvs2.tv_sec)*1000000 + tve2.tv_usec - tvs2.tv_usec);
@@ -73,7 +175,7 @@ void *thread_post(void *arg)
 	while(1)
 	{
 		sleep(2*60);
-		//w+ ´ò¿ª¿É¶ÁÐ´ÎÄ¼þ£¬ÈôÎÄ¼þ´æÔÚÔòÎÄ¼þ³¤¶ÈÇåÎªÁã£¬¼´¸ÃÎÄ¼þÄÚÈÝ»áÏûÊ§¡£ÈôÎÄ¼þ²»´æÔÚÔò½¨Á¢¸ÃÎÄ¼þ
+		//w+ æ‰“å¼€å¯è¯»å†™æ–‡ä»¶ï¼Œè‹¥æ–‡ä»¶å­˜åœ¨åˆ™æ–‡ä»¶é•¿åº¦æ¸…ä¸ºé›¶ï¼Œå³è¯¥æ–‡ä»¶å†…å®¹ä¼šæ¶ˆå¤±ã€‚è‹¥æ–‡ä»¶ä¸å­˜åœ¨åˆ™å»ºç«‹è¯¥æ–‡ä»¶
 		FILE *fp = fopen("/tmp/maclist.txt", "w+");
 		if (NULL == fp)
 		{
@@ -118,11 +220,12 @@ void *thread_post(void *arg)
 //			}
 //			else
 //			{
-				//¶àÁË&
-				sprintf(buf, "&%d={\"mac\":\"%02x:%02x:%02x:%02x:%02x:%02x\",\"firsttime\":\"0\",\"leavetime\":\"0\"}", i,
+				//å¤šäº†&
+				sprintf(buf, "&%d={\"mac\":\"%02x:%02x:%02x:%02x:%02x:%02x\",\"db\":\"%d\"}", i,
 					((unsigned char *)pnode->data)[0], ((unsigned char *)pnode->data)[1],
 					((unsigned char *)pnode->data)[2], ((unsigned char *)pnode->data)[3],
-					((unsigned char *)pnode->data)[4], ((unsigned char *)pnode->data)[5]);
+					((unsigned char *)pnode->data)[4], ((unsigned char *)pnode->data)[5],
+                    ((int8_t *)pnode->data)[6]);
 //			}
 			fwrite(buf, 1, strlen(buf), fp);
 		}
@@ -161,30 +264,34 @@ void PrintMacList()
 	}
 }
 
-void AddMacToList(void *mac)
+void AddMacToList(void *mac, int8_t dbm_antsignal)
 {
+    int8_t buf[7] = {0};
 	PNode pnode = GetListFront(MacList);
 	if (((unsigned char *)mac)[0] & 0x01)
 	{
-		//Èç¹ûµÚÒ»¸ö bit (LSB)Îª 1,¸ÃµØÖ·´ú±íÒ»×éÊµ¼Ê¹¤×÷Õ¾,³ÆÎª×é²¥(¶àµã´«²¥[multicast])µØÖ·¡£
-		//Èç¹ûËùÓÐ bit (LSB)¾ùÎª 1,¸ÃÖ¡¼´Êô¹ã²¥(broadcast),Òò´Ë»á´«ËÍ¸øÁ¬½ÓÖÁÎÞÏß½éÖÊµÄËùÓÐ¹¤×÷Õ¾¡£
-		//01-80-C2-00-00-00,LSBË³Ðò(±ÈÌØÐò)¾ÍÊÇ£º1000 0000 0000 0001 0100 0011 0000 0000 0000 0000 0000 0000
-		//±ÈÌØÐòÊÇ¡±Little Endian¡±£¨Ò²¾ÍÊÇ×îµÍÎ»ÏÈ´«ËÍ£©,ÒÔÌ«ÍøÏßÂ·ÉÏ°´¡°Big Endian¡±×Ö½ÚÐò´«ËÍ±¨ÎÄ
+		//å¦‚æžœç¬¬ä¸€ä¸ª bit (LSB)ä¸º 1,è¯¥åœ°å€ä»£è¡¨ä¸€ç»„å®žé™…å·¥ä½œç«™,ç§°ä¸ºç»„æ’­(å¤šç‚¹ä¼ æ’­[multicast])åœ°å€ã€‚
+		//å¦‚æžœæ‰€æœ‰ bit (LSB)å‡ä¸º 1,è¯¥å¸§å³å±žå¹¿æ’­(broadcast),å› æ­¤ä¼šä¼ é€ç»™è¿žæŽ¥è‡³æ— çº¿ä»‹è´¨çš„æ‰€æœ‰å·¥ä½œç«™ã€‚
+		//01-80-C2-00-00-00,LSBé¡ºåº(æ¯”ç‰¹åº)å°±æ˜¯ï¼š1000 0000 0000 0001 0100 0011 0000 0000 0000 0000 0000 0000
+		//æ¯”ç‰¹åºæ˜¯â€Little Endianâ€ï¼ˆä¹Ÿå°±æ˜¯æœ€ä½Žä½å…ˆä¼ é€ï¼‰,ä»¥å¤ªç½‘çº¿è·¯ä¸ŠæŒ‰â€œBig Endianâ€å­—èŠ‚åºä¼ é€æŠ¥æ–‡
 		return ;
 	}
 	if (0 != cmp_router_list(mac))
 	{
-		//¹ýÂËÂ·ÓÉÆ÷µÄmac
+		//è¿‡æ»¤è·¯ç”±å™¨çš„mac
 		return;
 	}
 	for (; NULL != pnode; pnode = pnode->next)
 	{
 		if(0 == memcmp(pnode->data, mac, 6))
 		{
+            ((int8_t *)pnode->data)[6] = dbm_antsignal;
 			return;
 		}
 	}
-	EnListTail(MacList, mac, 6);
+    memcpy(buf, mac, 6);
+    buf[6] = dbm_antsignal;
+	EnListTail(MacList, buf, 7);
 	dp("%4d %02x:%02x:%02x:%02x:%02x:%02x\n", MacList->size, ((unsigned char *)mac)[0], ((unsigned char *)mac)[1],
 				((unsigned char *)mac)[2], ((unsigned char *)mac)[3],
 				((unsigned char *)mac)[4], ((unsigned char *)mac)[5]);
@@ -250,42 +357,84 @@ void getPacket(u_char * arg, const struct pcap_pkthdr * pkthdr, const u_char * p
   dp("Number of bytes: %d\n", pkthdr->caplen);
   dp("Recieved time: %s", ctime((const time_t *)&pkthdr->ts.tv_sec)); 
 #endif  
+	struct ieee80211_radiotap_iterator iter;
+    void *data = (void *)packet;
+    int err = 0;
+    int i = 0;
+    int8_t dbm_antsignal = 0;
+
 	unsigned char nheadlen = packet[2];
-	//type=0 ¹ÜÀíÖ¡, type=1 ¿ØÖÆÖ¡, type=2 ¿ØÖÆÖ¡, type=3 Î´¶¨Òå
+	//type=0 ç®¡ç†å¸§, type=1 æŽ§åˆ¶å¸§, type=2 æ•°æ®å¸§, type=3 æœªå®šä¹‰
 	unsigned char type = (packet[nheadlen] >> 2) & 0x03;
 	unsigned char subtype = (packet[nheadlen] >> 4) & 0x0f;
-	//DS=0 ËùÓÐ¹ÜÀíÓë¿ØÖÆÖ¡, DS=1 to APÊý¾ÝÖ¡, DS=2 from APÊý¾ÝÖ¡, DS=3 from AP to APÊý¾ÝÖ¡(4µØÖ·WDS)
+	//DS=0 æ‰€æœ‰ç®¡ç†ä¸ŽæŽ§åˆ¶å¸§, DS=1 to APæ•°æ®å¸§, DS=2 from APæ•°æ®å¸§, DS=3 from AP to APæ•°æ®å¸§, DS=4 WDS(4åœ°å€)
 	unsigned char DS = packet[nheadlen + 1] & 0x03;
 	//dp("type:%02x subtype:%02x DS:%02x\n", type, subtype, DS);
+
+	err = ieee80211_radiotap_iterator_init(&iter, data, pkthdr->caplen, &vns);
+	if (err) {
+		printf("malformed radiotap header (init returns %d)\n", err);
+		return;
+	}
+	while (!(err = ieee80211_radiotap_iterator_next(&iter))) {
+		if (iter.this_arg_index == IEEE80211_RADIOTAP_VENDOR_NAMESPACE) {
+			printf("\tvendor NS (%.2x-%.2x-%.2x:%d, %d bytes)\n",
+				iter.this_arg[0], iter.this_arg[1],
+				iter.this_arg[2], iter.this_arg[3],
+				iter.this_arg_size - 6);
+			for (i = 6; i < iter.this_arg_size; i++) {
+				if (i % 8 == 6)
+					printf("\t\t");
+				else
+					printf(" ");
+				printf("%.2x", iter.this_arg[i]);
+			}
+			printf("\n");
+		} else if (iter.is_radiotap_ns)
+        {
+//			print_radiotap_namespace(&iter);
+            get_signal(&iter, &dbm_antsignal);
+        }
+//		else if (iter.current_namespace == &vns_array[0])
+//		{
+//			print_test_namespace(&iter);
+//		}
+	}
+    if (0 == dbm_antsignal)
+    {
+        printf("dbm_antsignal:%d\n", dbm_antsignal);
+        return;
+    }
+
 	if (0x00 == type)
 	{
-		//ËùÓÐ¹ÜÀíÖ¡µÄ MAC ±êÍ·¶¼Ò»Ñù,ÕâÓëÖ¡µÄ´ÎÀàÐÍÎÞ¹Ø
+		//æ‰€æœ‰ç®¡ç†å¸§çš„ MAC æ ‡å¤´éƒ½ä¸€æ ·,è¿™ä¸Žå¸§çš„æ¬¡ç±»åž‹æ— å…³(80211æ— çº¿ç½‘ç»œæƒå¨æŒ‡å—)
 		//DA SA BSSID
-		AddMacToList((void *)(packet + nheadlen + 4));
-		AddMacToList((void *)(packet + nheadlen + 10));
+		//AddMacToList((void *)(packet + nheadlen + 4));
+		AddMacToList((void *)(packet + nheadlen + 10), dbm_antsignal);
 	}
 	else if (0x01 == type)
 	{
 		if (0x0a == subtype)
 		{
-			//power save poll
-			AddMacToList((void *)(packet + nheadlen + 10));
+			//power save poll, TransmitterAddress
+			AddMacToList((void *)(packet + nheadlen + 10), dbm_antsignal);
 		}
 		else if (0x0b == subtype)
 		{
-			//RTS
-			AddMacToList((void *)(packet + nheadlen + 4));
-			AddMacToList((void *)(packet + nheadlen + 10));
+			//RTS, ReceiverAddress TransmitterAddress
+			//AddMacToList((void *)(packet + nheadlen + 4));
+			AddMacToList((void *)(packet + nheadlen + 10), dbm_antsignal);
 		}
 		else if (0x0c == subtype)
 		{
-			//CTS
-			AddMacToList((void *)(packet + nheadlen + 4));
+			//CTS, ReceiverAddress
+			//AddMacToList((void *)(packet + nheadlen + 4));
 		}
 		else if (0x0d == subtype)
 		{
-			//ACK
-			AddMacToList((void *)(packet + nheadlen + 4));
+			//ACK, ReceiverAddress
+			//AddMacToList((void *)(packet + nheadlen + 4));
 		}
 	}
 	else if (0x02 == type)
@@ -293,23 +442,24 @@ void getPacket(u_char * arg, const struct pcap_pkthdr * pkthdr, const u_char * p
 		if (1 == DS)
 		{
 			//BSSID SA DA
-			AddMacToList((void *)(packet + nheadlen + 10));
-			AddMacToList((void *)(packet + nheadlen + 16));
+			AddMacToList((void *)(packet + nheadlen + 10), dbm_antsignal);
+			//AddMacToList((void *)(packet + nheadlen + 16));
 		}
 		else if (2 == DS)
 		{
 			//DA BSSID SA
-			AddMacToList((void *)(packet + nheadlen + 4));
-			AddMacToList((void *)(packet + nheadlen + 16));
+			//AddMacToList((void *)(packet + nheadlen + 4));
+			AddMacToList((void *)(packet + nheadlen + 16), dbm_antsignal);
 		}
 		else if (0 == DS)
 		{
-			//DA SA BSSID(Ã»×¥µ½¹ýDS=0µÄÊý¾ÝÖ¡)
-			AddMacToList((void *)(packet + nheadlen + 4));
-			AddMacToList((void *)(packet + nheadlen + 10));
+			//DA SA BSSID(æ²¡æŠ“åˆ°è¿‡DS=0çš„æ•°æ®å¸§)
+			//AddMacToList((void *)(packet + nheadlen + 4));
+			AddMacToList((void *)(packet + nheadlen + 10), dbm_antsignal);
 		}
 		else
 		{
+            //RA TA DA SA
 			//WDS
 		}
 	}
@@ -391,7 +541,7 @@ void init_router_list()
 	ssize_t read = 0;
 	size_t len = 0;
 	char *line = NULL;
-	//Í³¼ÆÓÐÐ§ÐÐÊý
+	//ç»Ÿè®¡æœ‰æ•ˆè¡Œæ•°
 	while(-1 != (read = getline(&line, &len, fd)))
 	{
 		if (read == 7 && 0 == check_mac(line))
@@ -409,10 +559,10 @@ void init_router_list()
 		free(line);
 		line = NULL;
 	}
-	//·ÖÅäÄÚ´æÓÃÓÚ´æ´¢mac
+	//åˆ†é…å†…å­˜ç”¨äºŽå­˜å‚¨mac
 	dp("router size:%u\n", router_list_size);
 	router_list = (unsigned int *)malloc(router_list_size * sizeof(unsigned int));
-	//°Ñmac¶ÁÈ¡µ½ÄÚ´æ
+	//æŠŠmacè¯»å–åˆ°å†…å­˜
 	int i = 0;
 	fseek(fd, 0, SEEK_SET);
 	while(-1 != (read = getline(&line, &len, fd)))
@@ -485,13 +635,13 @@ int main(int argc, char *argv[])
 		exit(1);
 	}
 
-	//³õÊ¼»¯macÁÐ±í
+	//åˆå§‹åŒ–macåˆ—è¡¨
 	MacList = InitList();
 
-	//³õÊ¼»¯Â·ÓÉÆ÷ÁÐ±í,ÓÃÓÚ¹ýÂË
+	//åˆå§‹åŒ–è·¯ç”±å™¨åˆ—è¡¨,ç”¨äºŽè¿‡æ»¤
 	init_router_list();
 
-	//´´½¨¸Ä±ächannelµÄÏß³Ì
+	//åˆ›å»ºæ”¹å˜channelçš„çº¿ç¨‹
 	pthread_t threadid;
 	if(0 != pthread_create(&threadid, NULL, thread_channel, NULL))
 	{
@@ -505,7 +655,7 @@ int main(int argc, char *argv[])
 		exit(1);
 	}
 
-	//´´½¨¿ØÖÆÏß³Ì
+	//åˆ›å»ºæŽ§åˆ¶çº¿ç¨‹
 	if(0 != pthread_create(&threadid, NULL, thread_ctl, NULL))
 	{
 		perror("pthread_create");
