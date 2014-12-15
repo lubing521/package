@@ -21,13 +21,19 @@
 #define dp(...) do { if (dbg) { fprintf(stderr, __VA_ARGS__); } } while(0)
 #define ep(...) do { fprintf(stderr, __VA_ARGS__); } while(0)
 
+#define FILE_NAME_DATA_POST "/tmp/probe_data_post.txt"
+#define FILE_NAME_CONF_POST "/tmp/probe_conf_post.txt"
+#define FILE_NAME_CONF_RET "/tmp/probe_conf_ret.txt"
+#define FILE_NAME_ROUTER_MAC "/etc/router.txt"
+
 static int dbg = 0; //打印标志
 static int ctl_socket_server = 0;
-static char dev[32] = {0};
+static char dev_name[32] = {0};
 static int bg_chans  [] = 
 {
 	1, 7, 2, 8, 3, 9, 4, 10, 5, 11, 6
 };
+static int8_t dbm_limit = (int8_t)-100;
 
 //数据来源: http://standards.ieee.org/develop/regauth/oui/oui.txt 
 static unsigned int *router_list = NULL;
@@ -105,7 +111,7 @@ static void get_signal(struct ieee80211_radiotap_iterator *iter, int8_t *dbm_ant
 	switch (iter->this_arg_index) {
 	case IEEE80211_RADIOTAP_DBM_ANTSIGNAL:
         *dbm_antsignal = *(int8_t *)iter->this_arg;
-        dp("dbm_antsignal:%d\n", *dbm_antsignal);
+//        dp("dbm_antsignal:%d\n", *dbm_antsignal);
         break;
     default:
         break;
@@ -169,69 +175,162 @@ void *thread_channel(void *arg)
 	return NULL;
 }
 
+void get_mac(struct ifreq *pifreq)
+{
+    int sock;
+    if (NULL == pifreq)
+    {
+        return;
+    }
+    if((sock=socket(AF_INET,SOCK_STREAM,0))<0)
+    {
+            perror("socket");
+            return;
+    }
+    strcpy(pifreq->ifr_name, dev_name);
+    if(ioctl(sock,SIOCGIFHWADDR, pifreq)<0)
+    {
+            perror("ioctl");
+            return;
+    }
+    return;
+}
+
+void post_data()
+{
+    //w+ 打开可读写文件，若文件存在则文件长度清为零，即该文件内容会消失。若文件不存在则建立该文件
+    FILE *fp = fopen(FILE_NAME_DATA_POST, "w+");
+    if (NULL == fp)
+    {
+        return;
+    }
+    char buf[128] = {0};
+
+    struct ifreq ifreq;
+    get_mac(&ifreq);
+    sprintf(buf, "mac=%02x:%02x:%02x:%02x:%02x:%02x",
+                    (unsigned char)ifreq.ifr_hwaddr.sa_data[0],
+                    (unsigned char)ifreq.ifr_hwaddr.sa_data[1],
+                    (unsigned char)ifreq.ifr_hwaddr.sa_data[2],
+                    (unsigned char)ifreq.ifr_hwaddr.sa_data[3],
+                    (unsigned char)ifreq.ifr_hwaddr.sa_data[4],
+                    (unsigned char)ifreq.ifr_hwaddr.sa_data[5]);
+    fwrite(buf, 1, strlen(buf), fp);
+
+    PNode pnode = GetListFront(MacList);
+    int i = 0;
+    for (; NULL != pnode; pnode = pnode->next)
+    {
+        i++;
+        memset(buf, 0, sizeof(buf));
+//		if (1 == i)
+//		{
+//			sprintf(buf, "%d={\"mac\":\"%02x:%02x:%02x:%02x:%02x:%02x\",\"firsttime\":\"0\",\"leavetime\":\"0\"}", i,
+//				((unsigned char *)pnode->data)[0], ((unsigned char *)pnode->data)[1],
+//				((unsigned char *)pnode->data)[2], ((unsigned char *)pnode->data)[3],
+//				((unsigned char *)pnode->data)[4], ((unsigned char *)pnode->data)[5]);
+//		}
+//		else
+//		{
+            //多了&
+            sprintf(buf, "&%d={\"mac\":\"%02x:%02x:%02x:%02x:%02x:%02x\",\"db\":\"%d\"}", i,
+                ((unsigned char *)pnode->data)[0], ((unsigned char *)pnode->data)[1],
+                ((unsigned char *)pnode->data)[2], ((unsigned char *)pnode->data)[3],
+                ((unsigned char *)pnode->data)[4], ((unsigned char *)pnode->data)[5],
+                ((int8_t *)pnode->data)[6]);
+//		}
+        fwrite(buf, 1, strlen(buf), fp);
+    }
+    fclose(fp);
+    system("maclist=$(cat "FILE_NAME_DATA_POST") && wget -O /dev/null --post-data=$maclist http://boxdata.aijee.cn/wifidetect.php");
+    ClearList(MacList);
+
+    return;
+}
+
+void post_conf(unsigned int *interval_data, int8_t *dblimit)
+{
+    if (NULL == interval_data || NULL == dblimit)
+    {
+        return;
+    }
+    int ret = 0;
+    char buf[128] = {0};
+    struct ifreq ifreq;
+    get_mac(&ifreq);
+    FILE *fp = fopen(FILE_NAME_CONF_POST, "w+");
+    if (NULL == fp)
+    {
+        return;
+    }
+    sprintf(buf, "mac=%02x:%02x:%02x:%02x:%02x:%02x&upfreq=%u&dblimit=%d",
+                    (unsigned char)ifreq.ifr_hwaddr.sa_data[0],
+                    (unsigned char)ifreq.ifr_hwaddr.sa_data[1],
+                    (unsigned char)ifreq.ifr_hwaddr.sa_data[2],
+                    (unsigned char)ifreq.ifr_hwaddr.sa_data[3],
+                    (unsigned char)ifreq.ifr_hwaddr.sa_data[4],
+                    (unsigned char)ifreq.ifr_hwaddr.sa_data[5],
+                    *interval_data, *dblimit);
+    fwrite(buf, 1, strlen(buf), fp);
+    fclose(fp);
+    unlink(FILE_NAME_CONF_RET);
+    ret = system("maclist=$(cat "FILE_NAME_CONF_POST") && wget -O "FILE_NAME_CONF_RET
+                " --post-data=$maclist http://boxdata.aijee.cn/wifidetectconf.php");
+    if (ret < 0)
+    {
+        perror("system");
+        return;
+    }
+    fp = fopen(FILE_NAME_CONF_RET, "r");
+    if (NULL == fp)
+    {
+        perror("fopen");
+        return;
+    }
+	ssize_t read = 0;
+	size_t len = 0;
+	char *line = NULL;
+    printf("interval_data:%u, dblimit:%d\n", *interval_data, *dblimit);
+	while(-1 != (read = getline(&line, &len, fp)))
+	{
+        int dblimit_int = 0;
+        int sscanf_ret = 0;
+        sscanf_ret = sscanf(line, "{\"upfreq\":\"%u\",\"dblimit\":\"%d\"}", interval_data, &dblimit_int);
+        if (2 == sscanf_ret) //2代表2个参数获取成功
+        {
+            *dblimit = dblimit_int;
+            printf("sscanf:%d, interval_data:%u, dblimit:%d\n", sscanf_ret, *interval_data, *dblimit);
+        }
+	}
+    fclose(fp);
+	if (line)
+	{
+		free(line);
+		line = NULL;
+	}
+    return;
+}
+
 void *thread_post(void *arg)
 {
 	pthread_detach(pthread_self());
+    unsigned int interval_data = 2*60;
+    const unsigned int interval_conf = 60*60;
+    unsigned int conf_time = 0;
+
+    //一开始就获取一次配置
+    post_conf(&interval_data, &dbm_limit);
 	while(1)
 	{
-		sleep(2*60);
-		//w+ 打开可读写文件，若文件存在则文件长度清为零，即该文件内容会消失。若文件不存在则建立该文件
-		FILE *fp = fopen("/tmp/maclist.txt", "w+");
-		if (NULL == fp)
-		{
-			break;
-		}
-		char buf[128] = {0};
-
-		struct ifreq ifreq;
-		int sock;
-		if((sock=socket(AF_INET,SOCK_STREAM,0))<0)
+		sleep(interval_data);
+        conf_time += interval_data;
+        post_data();
+        if (conf_time >= interval_conf)
         {
-                perror("socket");
-                break;
+            //每1小时重新获取一次配置
+            conf_time = 0;
+            post_conf(&interval_data, &dbm_limit);
         }
-		strcpy(ifreq.ifr_name, dev);
-		if(ioctl(sock,SIOCGIFHWADDR,&ifreq)<0)
-        {
-                perror("ioctl");
-                break;
-        }
-		sprintf(buf, "mac=%02x:%02x:%02x:%02x:%02x:%02x",
-						(unsigned char)ifreq.ifr_hwaddr.sa_data[0],
-                        (unsigned char)ifreq.ifr_hwaddr.sa_data[1],
-                        (unsigned char)ifreq.ifr_hwaddr.sa_data[2],
-                        (unsigned char)ifreq.ifr_hwaddr.sa_data[3],
-                        (unsigned char)ifreq.ifr_hwaddr.sa_data[4],
-                        (unsigned char)ifreq.ifr_hwaddr.sa_data[5]);
-		fwrite(buf, 1, strlen(buf), fp);
-
-		PNode pnode = GetListFront(MacList);
-		int i = 0;
-		for (; NULL != pnode; pnode = pnode->next)
-		{
-			i++;
-			memset(buf, 0, sizeof(buf));
-//			if (1 == i)
-//			{
-//				sprintf(buf, "%d={\"mac\":\"%02x:%02x:%02x:%02x:%02x:%02x\",\"firsttime\":\"0\",\"leavetime\":\"0\"}", i,
-//					((unsigned char *)pnode->data)[0], ((unsigned char *)pnode->data)[1],
-//					((unsigned char *)pnode->data)[2], ((unsigned char *)pnode->data)[3],
-//					((unsigned char *)pnode->data)[4], ((unsigned char *)pnode->data)[5]);
-//			}
-//			else
-//			{
-				//多了&
-				sprintf(buf, "&%d={\"mac\":\"%02x:%02x:%02x:%02x:%02x:%02x\",\"db\":\"%d\"}", i,
-					((unsigned char *)pnode->data)[0], ((unsigned char *)pnode->data)[1],
-					((unsigned char *)pnode->data)[2], ((unsigned char *)pnode->data)[3],
-					((unsigned char *)pnode->data)[4], ((unsigned char *)pnode->data)[5],
-                    ((int8_t *)pnode->data)[6]);
-//			}
-			fwrite(buf, 1, strlen(buf), fp);
-		}
-		fclose(fp);
-		system("maclist=$(cat /tmp/maclist.txt) && wget -O /dev/null --post-data=$maclist http://boxdata.aijee.cn/wifidetect.php");
-		ClearList(MacList);
 	}
 	return NULL;
 }
@@ -257,15 +356,21 @@ void PrintMacList()
 	int i = 0;
 	for (; NULL != pnode; pnode = pnode->next)
 	{
-		ep("%4d %02x:%02x:%02x:%02x:%02x:%02x\n", i++, 
+		ep("%4d %02x:%02x:%02x:%02x:%02x:%02x,%d\n", i++, 
 				((unsigned char *)pnode->data)[0], ((unsigned char *)pnode->data)[1],
 				((unsigned char *)pnode->data)[2], ((unsigned char *)pnode->data)[3],
-				((unsigned char *)pnode->data)[4], ((unsigned char *)pnode->data)[5]);
+				((unsigned char *)pnode->data)[4], ((unsigned char *)pnode->data)[5],
+                ((int8_t *)pnode->data)[6]);
 	}
 }
 
 void AddMacToList(void *mac, int8_t dbm_antsignal)
 {
+    if (dbm_antsignal < dbm_limit)
+    {
+        //小于最小信号强度限制,抛弃
+        return;
+    }
     int8_t buf[7] = {0};
 	PNode pnode = GetListFront(MacList);
 	if (((unsigned char *)mac)[0] & 0x01)
@@ -292,9 +397,11 @@ void AddMacToList(void *mac, int8_t dbm_antsignal)
     memcpy(buf, mac, 6);
     buf[6] = dbm_antsignal;
 	EnListTail(MacList, buf, 7);
-	dp("%4d %02x:%02x:%02x:%02x:%02x:%02x\n", MacList->size, ((unsigned char *)mac)[0], ((unsigned char *)mac)[1],
+	dp("%4d %02x:%02x:%02x:%02x:%02x:%02x, %d\n", MacList->size, 
+                ((unsigned char *)mac)[0], ((unsigned char *)mac)[1],
 				((unsigned char *)mac)[2], ((unsigned char *)mac)[3],
-				((unsigned char *)mac)[4], ((unsigned char *)mac)[5]);
+				((unsigned char *)mac)[4], ((unsigned char *)mac)[5],
+                dbm_antsignal);
 	return ;
 }
 
@@ -402,7 +509,7 @@ void getPacket(u_char * arg, const struct pcap_pkthdr * pkthdr, const u_char * p
 	}
     if (0 == dbm_antsignal)
     {
-        printf("dbm_antsignal:%d\n", dbm_antsignal);
+//        printf("dbm_antsignal:%d\n", dbm_antsignal);
         return;
     }
 
@@ -410,7 +517,7 @@ void getPacket(u_char * arg, const struct pcap_pkthdr * pkthdr, const u_char * p
 	{
 		//所有管理帧的 MAC 标头都一样,这与帧的次类型无关(80211无线网络权威指南)
 		//DA SA BSSID
-		//AddMacToList((void *)(packet + nheadlen + 4));
+		//AddMacToList((void *)(packet + nheadlen + 4), dbm_antsignal);
 		AddMacToList((void *)(packet + nheadlen + 10), dbm_antsignal);
 	}
 	else if (0x01 == type)
@@ -423,18 +530,18 @@ void getPacket(u_char * arg, const struct pcap_pkthdr * pkthdr, const u_char * p
 		else if (0x0b == subtype)
 		{
 			//RTS, ReceiverAddress TransmitterAddress
-			//AddMacToList((void *)(packet + nheadlen + 4));
+			//AddMacToList((void *)(packet + nheadlen + 4), dbm_antsignal);
 			AddMacToList((void *)(packet + nheadlen + 10), dbm_antsignal);
 		}
 		else if (0x0c == subtype)
 		{
 			//CTS, ReceiverAddress
-			//AddMacToList((void *)(packet + nheadlen + 4));
+			//AddMacToList((void *)(packet + nheadlen + 4), dbm_antsignal);
 		}
 		else if (0x0d == subtype)
 		{
 			//ACK, ReceiverAddress
-			//AddMacToList((void *)(packet + nheadlen + 4));
+			//AddMacToList((void *)(packet + nheadlen + 4), dbm_antsignal);
 		}
 	}
 	else if (0x02 == type)
@@ -443,18 +550,18 @@ void getPacket(u_char * arg, const struct pcap_pkthdr * pkthdr, const u_char * p
 		{
 			//BSSID SA DA
 			AddMacToList((void *)(packet + nheadlen + 10), dbm_antsignal);
-			//AddMacToList((void *)(packet + nheadlen + 16));
+			//AddMacToList((void *)(packet + nheadlen + 16), dbm_antsignal);
 		}
 		else if (2 == DS)
 		{
 			//DA BSSID SA
-			//AddMacToList((void *)(packet + nheadlen + 4));
+			//AddMacToList((void *)(packet + nheadlen + 4), dbm_antsignal);
 			AddMacToList((void *)(packet + nheadlen + 16), dbm_antsignal);
 		}
 		else if (0 == DS)
 		{
 			//DA SA BSSID(没抓到过DS=0的数据帧)
-			//AddMacToList((void *)(packet + nheadlen + 4));
+			//AddMacToList((void *)(packet + nheadlen + 4), dbm_antsignal);
 			AddMacToList((void *)(packet + nheadlen + 10), dbm_antsignal);
 		}
 		else
@@ -532,10 +639,10 @@ unsigned int cal_mac_int(char *pc)
 
 void init_router_list()
 {
-	FILE *fd = fopen("/etc/router.txt", "r");
+	FILE *fd = fopen(FILE_NAME_ROUTER_MAC, "r");
 	if (NULL == fd)
 	{
-		perror("fopen /etc/router.txt");
+		perror("fopen "FILE_NAME_ROUTER_MAC);
 		return;
 	}
 	ssize_t read = 0;
@@ -578,6 +685,7 @@ void init_router_list()
 	{
 		free(line);
 	}
+    fclose(fd);
 	return;
 }
 
@@ -601,7 +709,7 @@ int arg_option(int argc, char *argv[])
 			}
 			case 'i':
 			{
-				memcpy(dev, optarg, strlen(optarg) > sizeof(dev) ? sizeof(dev) : strlen(optarg));
+				memcpy(dev_name, optarg, strlen(optarg) > sizeof(dev_name) ? sizeof(dev_name) : strlen(optarg));
 				break;
 			}
 			default:
@@ -612,7 +720,7 @@ int arg_option(int argc, char *argv[])
 		}
 	}
 	#endif
-	if (dev[0] == 0)
+	if (dev_name[0] == 0)
 	{
 		dp("parameter error\n");
 		exit(155);
@@ -628,7 +736,7 @@ int main(int argc, char *argv[])
 	char errBuf[PCAP_ERRBUF_SIZE];//, * devStr;
 
 	/* open a device, wait until a packet arrives */
-	pcap_t * device = pcap_open_live(dev, 65535, 0, 0, errBuf);
+	pcap_t * device = pcap_open_live(dev_name, 65535, 0, 0, errBuf);
 	if(!device)
 	{
 		ep("error: pcap_open_live(): %s\n", errBuf);
