@@ -31,8 +31,10 @@ define Build/Prepare
 endef
 
 define Package/$(PKG_NAME)/install
-	$(INSTALL_DIR) $(1)/usr/sbin
-	$(INSTALL_BIN) $(PKG_BUILD_DIR)/src/gmediarender $(1)/usr/sbin/
+	$(INSTALL_DIR) $(1)/usr/bin
+	$(INSTALL_BIN) $(PKG_BUILD_DIR)/src/gmediarender $(1)/usr/bin/
+	$(INSTALL_DIR) $(1)/etc/init.d
+	$(INSTALL_BIN) $(PKG_BUILD_DIR)/init.d.sh $(1)/etc/init.d/
 	$(INSTALL_DIR) $(1)/usr/share/gmediarender
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/data/grender-64x64.png $(1)/usr/share/gmediarender/
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/data/grender-128x128.png $(1)/usr/share/gmediarender/
