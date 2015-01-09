@@ -38,7 +38,7 @@ define Package/$(PKG_NAME)
 	CATEGORY:=Utilities
 	TITLE:=Helloworld -- prints a snarky message
 	MAINTAINER:=dengjunyong
-	DEPENDS:=+libpthread +libpcap
+	DEPENDS:=+libpthread +libpcap +libnl-tiny @(!TARGET_avr32||BROKEN)
 endef
 
 # Uncomment portion below for Kamikaze and delete DESCRIPTION variable above
@@ -47,6 +47,17 @@ define Package/$(PKG_NAME)/description
 	brain-dead and need immediate medical attention.
 endef
  
+TARGET_CPPFLAGS:= \
+	-I$(STAGING_DIR)/usr/include/libnl-tiny \
+	$(TARGET_CPPFLAGS) \
+
+#MAKE_FLAGS 中定义的变量覆盖src/Makefile中的变量
+MAKE_FLAGS += \
+	CFLAGS="$(TARGET_CPPFLAGS) $(TARGET_CFLAGS) -ffunction-sections -fdata-sections" \
+	LDFLAGS="$(TARGET_LDFLAGS) -Wl,--gc-sections" \
+	NL1FOUND="" NL2FOUND=Y \
+	NLLIBNAME="libnl-tiny" \
+	LIBS="-lm -lnl-tiny" \
 # Specify what needs to be done to prepare for building the package.
 # In our case, we need to copy the source files to the build directory.
 # This is NOT the default.  The default uses the PKG_SOURCE_URL and the

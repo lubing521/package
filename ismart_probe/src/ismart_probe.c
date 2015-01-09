@@ -17,6 +17,7 @@
 #include <errno.h>
 #include "List.h"
 #include "radiotap_iter.h"
+#include "wireless.h"
 
 #define dp(...) do { if (dbg) { fprintf(stderr, __VA_ARGS__); } } while(0)
 #define ep(...) do { fprintf(stderr, __VA_ARGS__); } while(0)
@@ -152,19 +153,35 @@ List *MacList = NULL;
 void *thread_channel(void *arg)
 {
 	pthread_detach(pthread_self());
-	char cmd[64] = {0};
+//	char cmd[64] = {0};
 	int i = 0;
+    int ret = 0;
+//    FILE *fp;
+
 //	struct timeval tvs2;
 //	struct timeval tve2;
 	dp("channel hop \n");
 	while(1)
 	{
-		sprintf(cmd, "iw phy0 set channel %d", bg_chans[i]);
+//		sprintf(cmd, "iw phy0 set channel %d", bg_chans[i]);
 //		gettimeofday(&tvs2, NULL);
 		//system()执行实际需要24ms
-		system(cmd);
+//		ret = system(cmd);
+//        fp = popen(cmd, "w");
+//        if (NULL == fp)
+//        {
+//            perror("popen");
+//            continue;
+//        }
+//		fputs(cmd, fp);  
+//        ret = pclose(fp);
+//		printf("iw phy0 set channel %d : ret %d\n", bg_chans[i], ret);
+//        perror("system");
+//        perror("popen");
 //		gettimeofday(&tve2, NULL);
 //		dp("%s: time %ld\n", cmd, (tve2.tv_sec - tvs2.tv_sec)*1000000 + tve2.tv_usec - tvs2.tv_usec);
+        ret = wireless_set_channel("phy0", bg_chans[i]);
+		printf("wireless_set_channel %d : ret %d\n", bg_chans[i], ret);
 		usleep(250 * 1000);
 		i++;
 		if(10 < i)
@@ -295,7 +312,8 @@ void post_conf(unsigned int *interval_data, int8_t *dblimit)
 	{
         int dblimit_int = 0;
         int sscanf_ret = 0;
-        sscanf_ret = sscanf(line, "{\"upfreq\":\"%u\",\"dblimit\":\"%d\"}", interval_data, &dblimit_int);
+//        sscanf_ret = sscanf(line, "{\"upfreq\":\"%u\",\"dblimit\":\"%d\"}", interval_data, &dblimit_int);
+        sscanf_ret = sscanf(line, "{\"upfreq\":%u,\"dblimit\":%d}", interval_data, &dblimit_int);
         if (2 == sscanf_ret) //2代表2个参数获取成功
         {
             *dblimit = dblimit_int;
