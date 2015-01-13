@@ -210,6 +210,7 @@ void get_mac(struct ifreq *pifreq)
             perror("ioctl");
             return;
     }
+    close(sock);
     return;
 }
 
