@@ -9,6 +9,7 @@
 #include <sys/unistd.h>
 #include <sys/un.h>
 #include <sys/socket.h>
+#include <sys/sysinfo.h>
 #include <netinet/in.h>
 #include <sys/ioctl.h>
 #include <arpa/inet.h>
@@ -60,6 +61,16 @@ static const struct ieee80211_radiotap_vendor_namespaces vns = {
 	.ns = vns_array,
 	.n_ns = sizeof(vns_array)/sizeof(vns_array[0]),
 };
+
+long getuptime()
+{
+	struct sysinfo info;
+	if (sysinfo(&info))
+	{
+		return 0;
+	}
+	return info.uptime;
+}
 
 #if 0
 static void print_radiotap_namespace(struct ieee80211_radiotap_iterator *iter)
@@ -260,7 +271,7 @@ void post_data()
         fwrite(buf, 1, strlen(buf), fp);
     }
     fclose(fp);
-    system("maclist=$(cat "FILE_NAME_DATA_POST") && wget -O /dev/null --post-data=$maclist http://boxdata.aijee.cn/wifidetect.php");
+    system("maclist=$(cat "FILE_NAME_DATA_POST") && wget -t 1 -T 10 -O /dev/null --post-data=$maclist http://boxdata.aijee.cn/wifidetect.php");
     ClearList(MacList);
 
     return;
@@ -292,7 +303,7 @@ void post_conf(unsigned int *interval_data, int8_t *dblimit)
     fwrite(buf, 1, strlen(buf), fp);
     fclose(fp);
     unlink(FILE_NAME_CONF_RET);
-    ret = system("maclist=$(cat "FILE_NAME_CONF_POST") && wget -O "FILE_NAME_CONF_RET
+    ret = system("maclist=$(cat "FILE_NAME_CONF_POST") && wget -t 1 -T 10 -O "FILE_NAME_CONF_RET
                 " --post-data=$maclist http://boxdata.aijee.cn/wifidetectconf.php");
     if (ret < 0)
     {
@@ -335,19 +346,22 @@ void *thread_post(void *arg)
 	pthread_detach(pthread_self());
     unsigned int interval_data = 2*60;
     const unsigned int interval_conf = 60*60;
-    unsigned int conf_time = 0;
+//    unsigned int conf_time = 0;
+    long time = getuptime();
 
     //一开始就获取一次配置
     post_conf(&interval_data, &dbm_limit);
 	while(1)
 	{
 		sleep(interval_data);
-        conf_time += interval_data;
+//        conf_time += interval_data;
         post_data();
-        if (conf_time >= interval_conf)
+//        if (conf_time >= interval_conf)
+        if (getuptime() - time > interval_conf || 0 != access(FILE_NAME_CONF_RET, F_OK))
         {
             //每1小时重新获取一次配置
-            conf_time = 0;
+//            conf_time = 0;
+            time = getuptime();
             post_conf(&interval_data, &dbm_limit);
         }
 	}
