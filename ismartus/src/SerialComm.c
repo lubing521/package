@@ -24,6 +24,7 @@ static int g_nReadErr = 0;
 static pthread_t g_ptWriteSerial = 0;
 	//struct timeval tvs2;
 	//struct timeval tve2;
+char g_dev_name[64] = {0};
 
 
 int ReadChar(unsigned char *pChar)
@@ -74,7 +75,12 @@ static void* pthreadListen (void* arg)
 		if (g_hSerialDevFd <= 0)
 		{
 			TRACEERR("serial dev not open\n");
-			if(access(SERIAL_DEV, R_OK | W_OK)==0)
+            if (0 == g_dev_name[0])
+            {
+                memcpy(g_dev_name, SERIAL_DEV, strlen(SERIAL_DEV));
+            }
+            TRACE("dev name %d:%s\n", strlen(g_dev_name), g_dev_name);
+			if(access(g_dev_name, R_OK | W_OK)==0)
 			{
 				if (0 >= SerialOpen())
 				{
@@ -300,7 +306,7 @@ int SerialOpen()
 {
 	if (g_hSerialDevFd <= 0)
 	{
-		g_hSerialDevFd = open(SERIAL_DEV, O_RDWR | O_NOCTTY | O_NDELAY);
+		g_hSerialDevFd = open(g_dev_name, O_RDWR | O_NOCTTY | O_NDELAY);
 		if (g_hSerialDevFd <= 0)
 		{
 			//perror("open");

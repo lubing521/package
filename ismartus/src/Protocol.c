@@ -694,6 +694,7 @@ int PackGatewayNodeRet(ISmartFrame *pISMartFrame, unsigned int *pnLen)
 		return ReturnError;
 	}
 	FillSourceMac(pISMartFrame);
+    FillSourceMacToTarget(pISMartFrame);
 
 	FillCRC(pISMartFrame);
 	

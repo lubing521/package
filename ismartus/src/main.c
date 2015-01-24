@@ -13,6 +13,7 @@ static unsigned int g_nRecvSerialBuffSize = 0;
 static unsigned char g_szRecvNetBuff[SIZE_NET_RECV_BUFF] = {0};
 static unsigned int g_nRecvNetBuffSize = 0;
 static struct sockaddr_in g_oRecvNetBuffFrom = {0,0,{0},{0}};
+extern char g_dev_name[64];
 
 int CallBackRecvSerialFun()
 {
@@ -30,7 +31,7 @@ int main(int argc, char *argv[])
 	//根据参数，创建守护进程
 	int nDaemon = 0;
 	int opt;
-	while((opt=getopt(argc,argv, "dnsv:")) != -1)
+	while((opt=getopt(argc,argv, "dnsv:i:")) != -1)
 	{
 		switch(opt)
 		{
@@ -54,6 +55,10 @@ int main(int argc, char *argv[])
 				SetNetPrint();
 				break;
 			}
+            case 'i':
+            {
+                memcpy(g_dev_name, optarg, strlen(optarg));
+            }
 			default:
 			{
 				break;

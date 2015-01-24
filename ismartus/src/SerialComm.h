@@ -2,7 +2,7 @@
 #ifndef _ISMART_SERIAL_COMM_H_
 #define _ISMART_SERIAL_COMM_H_
 
-#define SERIAL_DEV "/dev/ttyATH0"
+#define SERIAL_DEV "/dev/ttyUSB0"
 #define SIZE_SERIAL_RECV_BUFF 1024
 #define READ_FREQUENCY 10000 /*10∫¡√Î*/
 #define WRITE_FREQUENCY 100000 /*100ms*/

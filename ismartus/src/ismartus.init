@@ -5,7 +5,7 @@ START=99
 STOP=99
 
 start() {
-        [ -x /usr/bin/ismartus ] && ismartus -d
+        [ -x /usr/bin/ismartus ] && ismartus -i /dev/ttyATH0 -d
 }
 
 stop() {

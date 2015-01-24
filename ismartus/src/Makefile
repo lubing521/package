@@ -2,11 +2,13 @@ SRCS = $(wildcard *.c)
 OBJS = $(SRCS:.c=.o)
 #CC = gcc
 #tw
-#CC=mips-linux-gcc
+#CC?=mips-linux-gcc
 #nc mips
-#CC=mipsel-unknown-linux-uclibc-gcc
+#CC?=mipsel-unknown-linux-uclibc-gcc
 #nc arm
-#CC=arm-marvell-linux-uclibcgnueabi-gcc
+#CC?=arm-marvell-linux-uclibcgnueabi-gcc
+#xuanbox
+CC?=arm-none-linux-gnueabi-gcc
 INCLUDES = -I ./lib
 LIBS = -L ./lib
 #CCFLAGS = -g -Wall -O0
